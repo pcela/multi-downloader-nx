@@ -45,3 +45,11 @@ widevine/*
 !widevine/.gitkeep
 playready/*
 !playready/.gitkeep
+apk/
+jadx-*/
+jadx_output/
+extracted_credentials.txt
+extracted_from_real_apk.txt
+final builds/
+package-lock.json
+tmp_new_episodes.json

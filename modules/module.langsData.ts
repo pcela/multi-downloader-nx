@@ -62,7 +62,6 @@ const dubLanguageCodes = (() => {
 	return [...new Set(dubLanguageCodesArray)];
 })();
 
-
 // construct subtitle languages filter
 const subtitleLanguagesFilter = (() => {
 	const subtitleLanguagesExtraParameters = ['all', 'none'];

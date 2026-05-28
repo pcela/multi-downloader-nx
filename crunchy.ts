@@ -590,9 +590,14 @@ export default class Crunchy implements ServiceClass {
 			/*if (ifNeeded)
         return;*/
 			if (!(Date.now() > new Date(this.token.expires).getTime()) && ifNeeded) {
+				// Even if token is valid, ensure CMS token is available
+				if (this.token.refresh_token) {
+					await this.getProfile(silent);
+				}
+				await this.getCMStoken(ifNeeded);
 				return;
 			} else {
-				//console.info('[WARN] The token has expired compleatly. I will try to refresh the token anyway, but you might have to reauth.');
+				//console.info('[WARN] The token has expired completely. I will try to refresh the token anyway, but you might have to reauth.');
 			}
 
 			const basic = atob(api.basic_auth_token);
