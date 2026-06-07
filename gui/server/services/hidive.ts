@@ -1,4 +1,4 @@
-import { AuthData, CheckTokenResponse, DownloadData, EpisodeListResponse, MessageHandler, ResolveItemsData, SearchData, SearchResponse } from '../../../@types/messageHandler';
+import { AuthData, CheckTokenResponse, EpisodeListResponse, MessageHandler, QueueItem, ResolveItemsData, SearchData, SearchResponse } from '../../../@types/messageHandler';
 import Hidive from '../../../hidive';
 import { getDefault } from '../../../modules/module.args';
 import { languages } from '../../../modules/module.langsData';
@@ -139,26 +139,40 @@ class HidiveHandler extends Base implements MessageHandler {
 		};
 	}
 
-	public async downloadItem(data: DownloadData) {
+	public async downloadItem(data: QueueItem) {
 		this.setDownloading(true);
 		console.debug(`Got download options: ${JSON.stringify(data)}`);
 		const _default = yargs.appArgv(this.hidive.cfg.cli, true);
-		const parsed = this.parseHidiveInput(data.id);
-		const res = parsed.type === 'season' ? await this.hidive.selectSeason(parsed.id, data.e, false, false) : await this.hidive.selectSeries(parsed.id, data.e, false, false);
-		if (!res.isOk || !res.showData) return this.alertError(new Error('Download failed upstream, check for additional logs'));
+		const downloadOpts = {
+			..._default,
+			callbackMaker: this.makeProgressHandler.bind(this),
+			dubLang: data.dubLang,
+			dlsubs: data.dlsubs,
+			fileName: data.fileName,
+			q: data.q,
+			force: 'y',
+			noaudio: data.noaudio,
+			novids: data.novids
+		};
 
-		for (const ep of res.value) {
-			await this.hidive.downloadEpisode(ep, {
-				..._default,
-				callbackMaker: this.makeProgressHandler.bind(this),
-				dubLang: data.dubLang,
-				dlsubs: data.dlsubs,
-				fileName: data.fileName,
-				q: data.q,
-				force: 'y',
-				noaudio: data.noaudio,
-				novids: data.novids
-			});
+		const episodeId = data.ids?.[0];
+		if (episodeId != null) {
+			const result = await this.hidive.downloadSingleEpisode(Number(episodeId), downloadOpts);
+			if (!result.isOk) {
+				this.alertError(result.reason instanceof Error ? result.reason : new Error('Download failed upstream, check for additional logs'));
+			}
+		} else {
+			const parsed = this.parseHidiveInput(data.id);
+			const res =
+				parsed.type === 'season' ? await this.hidive.selectSeason(parsed.id, data.e, false, false) : await this.hidive.selectSeries(parsed.id, data.e, false, false);
+			if (!res.isOk || !res.showData) return this.alertError(new Error('Download failed upstream, check for additional logs'));
+
+			for (const ep of res.value) {
+				const result = await this.hidive.downloadEpisode(ep, downloadOpts);
+				if (!result.isOk) {
+					this.alertError(result.reason instanceof Error ? result.reason : new Error('Download failed upstream, check for additional logs'));
+				}
+			}
 		}
 		this.sendMessage({ name: 'finish', data: undefined });
 		this.setDownloading(false);

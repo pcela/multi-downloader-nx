@@ -1093,8 +1093,8 @@ export default class Crunchy implements ServiceClass {
 			}
 		};
 		// Different limits for series vs episodes
-		const itemsPerPage = isEpisodeFeed ? '500' : '25';
-		const paginationSize = isEpisodeFeed ? 500 : 25;
+		const itemsPerPage = isEpisodeFeed ? '2500' : '25';
+		const paginationSize = isEpisodeFeed ? 2500 : 25;
 
 		const newlyAddedParams = new URLSearchParams({
 			sort_by: 'newly_added',

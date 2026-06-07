@@ -845,7 +845,8 @@ export default class Hidive implements ServiceClass {
 		const episodeData = JSON.parse(await episodeDataReq.res.text()) as NewHidiveEpisode;
 
 		if (!episodeData.playerUrlCallback) {
-			console.error('Failed to download episode: You do not have access to this');
+			const accessHint = episodeData.accessLevel ? ` (accessLevel: ${episodeData.accessLevel})` : '';
+			console.error(`Failed to download episode [E.${selectedEpisode.id}]: You do not have access to this${accessHint}`);
 			return { isOk: false, reason: new Error('You do not have access to this') };
 		}
 
@@ -914,7 +915,8 @@ export default class Hidive implements ServiceClass {
 		}
 
 		if (!episodeData.playerUrlCallback) {
-			console.error('Failed to download episode: You do not have access to this');
+			const accessHint = episodeData.accessLevel ? ` (accessLevel: ${episodeData.accessLevel})` : '';
+			console.error(`Failed to download episode [E.${id}]: You do not have access to this${accessHint}`);
 			return { isOk: false, reason: new Error('You do not have access to this') };
 		}
 
