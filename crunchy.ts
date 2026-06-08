@@ -1126,7 +1126,7 @@ export default class Crunchy implements ServiceClass {
 		}
 
 		const cutoffDate = new Date();
-		cutoffDate.setDate(cutoffDate.getDate() - 7);
+		cutoffDate.setDate(cutoffDate.getDate() - 8);
 
 		console.info('Newly added:');
 		for (const i of newlyAddedResults.items) {
@@ -1153,7 +1153,7 @@ export default class Crunchy implements ServiceClass {
 	private async getRecentEpisodesFallback(existingItems: any[]) {
 		try {
 			const cutoffDate = new Date();
-			cutoffDate.setDate(cutoffDate.getDate() - 7);
+			cutoffDate.setDate(cutoffDate.getDate() - 8);
 
 			// Collect existing episode IDs
 			const existingEpisodeIds = new Set<string>(existingItems.map((item) => item.id).filter(Boolean));
