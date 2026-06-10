@@ -22,6 +22,8 @@ export type CrunchyDownloadOptions = {
 	callbackMaker?: (data: DownloadInfo) => HLSCallback;
 	timeout: number;
 	waittime: number;
+	/** Set when downloading multiple episodes (--all / GUI batch queue) */
+	all?: boolean;
 	fsRetryTime: number;
 	dlsubs: string[];
 	subdlfailed?: boolean;

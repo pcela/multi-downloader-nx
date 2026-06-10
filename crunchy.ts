@@ -52,6 +52,9 @@ export type sxItem = {
 	fonts: Font[];
 };
 
+/** Pause between episodes when batching with --all (only if waittime is unset) */
+const BATCH_EPISODE_WAIT_MS = 5000;
+
 export default class Crunchy implements ServiceClass {
 	public cfg: yamlCfg.ConfigObject;
 	public locale: string;
@@ -531,6 +534,12 @@ export default class Crunchy implements ServiceClass {
 		return new Promise((resolve) => {
 			setTimeout(resolve, ms);
 		});
+	}
+
+	private episodeBatchPauseMs(options: CrunchyDownloadOptions, isSeries?: boolean): number {
+		if (options.waittime > 0) return 0;
+		if (options.all || isSeries) return BATCH_EPISODE_WAIT_MS;
+		return 0;
 	}
 
 	public async loginWithToken(refreshToken: string) {
@@ -1459,6 +1468,11 @@ export default class Crunchy implements ServiceClass {
 					data.showID,
 					[data.e]
 				);
+			}
+			const batchPause = this.episodeBatchPauseMs(options, isSeries);
+			if (batchPause > 0) {
+				console.info(`[INFO] Pausing ${batchPause / 1000}s before next episode (batch download)`);
+				await this.sleep(batchPause);
 			}
 		}
 		return true;
@@ -3473,7 +3487,9 @@ export default class Crunchy implements ServiceClass {
 				console.info('Subtitles downloading skipped!');
 			}
 
-			await this.sleep(options.waittime);
+			if (options.waittime > 0) {
+				await this.sleep(options.waittime);
+			}
 		}
 		return {
 			error: dlFailed,

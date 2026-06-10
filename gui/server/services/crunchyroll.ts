@@ -1,4 +1,4 @@
-import { AuthData, CheckTokenResponse, DownloadData, EpisodeListResponse, MessageHandler, ResolveItemsData, SearchData, SearchResponse } from '../../../@types/messageHandler';
+import { AuthData, CheckTokenResponse, EpisodeListResponse, MessageHandler, QueueItem, ResolveItemsData, SearchData, SearchResponse } from '../../../@types/messageHandler';
 import Crunchy from '../../../crunchy';
 import { getDefault } from '../../../modules/module.args';
 import { languages, subtitleLanguagesFilter } from '../../../modules/module.langsData';
@@ -101,7 +101,7 @@ class CrunchyHandler extends Base implements MessageHandler {
 		return this.crunchy.doAuth(data);
 	}
 
-	public async downloadItem(data: DownloadData) {
+	public async downloadItem(data: QueueItem) {
 		this.getDefaults();
 		await this.crunchy.refreshToken(true);
 		console.debug(`Got download options: ${JSON.stringify(data)}`);
@@ -125,7 +125,8 @@ class CrunchyHandler extends Base implements MessageHandler {
 						force: 'y',
 						novids: data.novids,
 						noaudio: data.noaudio,
-						hslang: data.hslang || 'none'
+						hslang: data.hslang || 'none',
+						all: data.all
 					}))
 				) {
 					const er = new Error(`Unable to download episode ${data.e} from ${data.id}`);

@@ -82,14 +82,13 @@ export class Req {
 			if (!res.ok) {
 				if (res.status === 429 && retryCount < 3) {
 					const retryAfter = res.headers.get('retry-after');
-					const waitSecs = retryAfter ? parseInt(retryAfter) : 0;
-					if (waitSecs > 0 && waitSecs <= 60) {
-						console.warn(`[Fetch] Rate limited (429). Retrying in ${waitSecs}s... (attempt ${retryCount + 1}/3)`);
-						await new Promise((r) => setTimeout(r, waitSecs * 1000));
-						return this.getData(durl, params, retryCount + 1);
-					} else {
-						console.error(`[Fetch] Rate limited (429). Retry-After: ${retryAfter ?? 'not specified'}. Aborting.`);
-					}
+					const parsed = retryAfter ? parseInt(retryAfter, 10) : NaN;
+					const fallback = [30, 60, 90][retryCount] ?? 90;
+					const waitSecs = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+					const source = Number.isFinite(parsed) && parsed > 0 ? 'Retry-After header' : 'fallback backoff';
+					console.warn(`[Fetch] Rate limited (429). Waiting ${waitSecs}s (${source}), then retry (attempt ${retryCount + 1}/3)`);
+					await new Promise((r) => setTimeout(r, waitSecs * 1000));
+					return this.getData(durl, params, retryCount + 1);
 				}
 				console.error(`${res.status}: ${res.statusText}`);
 				const body = await res.text();

@@ -57,6 +57,7 @@ export type ResolveItemsData = {
 	fileName: string;
 	q: number;
 	dlsubs: string[];
+	hslang?: string;
 	/** OceanVeil: use SFW catalog for metadata (default false = mature) */
 	sfw?: boolean;
 };
