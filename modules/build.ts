@@ -137,6 +137,17 @@ async function buildBinary(buildType: BuildTypes, gui: boolean) {
 	fs.writeFileSync(hashPath, `${checksum} ${path.basename(zipPath)}\n`);
 	console.info(`[Checksum] Checksum created: ${hashPath}`);
 	console.info(`[Checksum] SHA256: ${checksum}`);
+
+	// Copy to project-root "final builds" when it exists (build runs from lib/)
+	const projectRoot = path.resolve(buildsDir, '..', '..');
+	const finalBuilds = path.join(projectRoot, 'final builds');
+	if (fs.existsSync(projectRoot) && projectRoot !== path.resolve(buildsDir)) {
+		if (!fs.existsSync(finalBuilds)) fs.mkdirSync(finalBuilds, { recursive: true });
+		fs.cpSync(buildDir, path.join(finalBuilds, buildFull), { recursive: true, force: true });
+		fs.copyFileSync(zipPath, path.join(finalBuilds, `${buildFull}.7z`));
+		fs.copyFileSync(hashPath, path.join(finalBuilds, `${buildFull}.7z.sha256`));
+		console.info(`[Build] Copied to ${finalBuilds}`);
+	}
 }
 
 function getFriendlyName(buildString: string): string {

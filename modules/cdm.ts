@@ -8,12 +8,33 @@ import { Widevine, KeyContainer, LicenseType } from 'widevine';
 
 const req = new reqModule.Req();
 
+// CDM location: prefer keys next to the executable. Only use contentDirectory (e.g. Homebrew) when no CDM dirs exist under workingDir — otherwise dotenv-loaded .env can point at the wrong tree and break Widevine init.
+const cdmBase = (() => {
+	const contentDirOk =
+		process.env.contentDirectory &&
+		(() => {
+			try {
+				return fs.existsSync(process.env.contentDirectory!) && fs.statSync(process.env.contentDirectory!).isDirectory();
+			} catch {
+				return false;
+			}
+		})();
+
+	const hasCdmUnder = (base: string) => fs.existsSync(path.join(base, 'widevine')) || fs.existsSync(path.join(base, 'playready'));
+
+	if (hasCdmUnder(workingDir)) return workingDir;
+
+	if (contentDirOk && hasCdmUnder(process.env.contentDirectory!)) return process.env.contentDirectory!;
+
+	return workingDir;
+})();
+
 //read cdm files located in the same directory
 let widevine: Widevine | undefined, playready: Playready | undefined;
 export let cdm: 'widevine' | 'playready';
 export let canDecrypt: boolean;
 try {
-	const playready_dir = path.join(workingDir, 'playready');
+	const playready_dir = path.join(cdmBase, 'playready');
 
 	if (fs.existsSync(playready_dir)) {
 		const files_prd = fs.readdirSync(playready_dir);
@@ -21,8 +42,8 @@ try {
 		const zgpriv_file_found = files_prd.find((f) => f.includes('zgpriv'));
 		const prd_file_found = files_prd.find((f) => f.endsWith('.prd'));
 		try {
-			const file_bgroup = path.join(workingDir, 'playready', 'bgroupcert.dat');
-			const file_zgpriv = path.join(workingDir, 'playready', 'zgpriv.dat');
+			const file_bgroup = path.join(cdmBase, 'playready', 'bgroupcert.dat');
+			const file_zgpriv = path.join(cdmBase, 'playready', 'zgpriv.dat');
 
 			if (bgroup_file_found && zgpriv_file_found) {
 				const bgroup_stats = fs.statSync(file_bgroup);
@@ -37,7 +58,7 @@ try {
 					playready = Playready.init(bgroup, zgpriv);
 				}
 			} else if (prd_file_found) {
-				const file_prd = path.join(workingDir, 'playready', prd_file_found);
+				const file_prd = path.join(cdmBase, 'playready', prd_file_found);
 				const prd = fs.readFileSync(file_prd);
 
 				// Init Playready Client with PRD file
@@ -49,18 +70,18 @@ try {
 		}
 	}
 
-	const widevine_dir = path.join(workingDir, 'widevine');
+	const widevine_dir = path.join(cdmBase, 'widevine');
 
 	if (fs.existsSync(widevine_dir)) {
-		const files_wvd = fs.readdirSync(widevine_dir);
 		try {
+			const files_wvd = fs.readdirSync(widevine_dir);
 			let identifierBlob: Buffer = Buffer.from([]);
 			let privateKey: Buffer = Buffer.from([]);
 			let wvd: Buffer = Buffer.from([]);
 
 			// Searching files for client id blob and private key
 			files_wvd.forEach(function (file) {
-				file = path.join(workingDir, 'widevine', file);
+				file = path.join(cdmBase, 'widevine', file);
 				const stats = fs.statSync(file);
 				if (stats.size < 1024 * 8 && stats.isFile()) {
 					const fileContents = fs.readFileSync(file, { encoding: 'utf8' });
@@ -100,6 +121,7 @@ try {
 			}
 		} catch (e) {
 			console.error('Error loading Widevine CDM, malformed client blob or private key.');
+			console.error(e);
 		}
 	}
 

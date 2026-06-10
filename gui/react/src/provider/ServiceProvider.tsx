@@ -3,7 +3,7 @@ import { Box, Button, Typography, Avatar } from '@mui/material';
 import useStore from '../hooks/useStore';
 import { StoreState } from './Store';
 
-type Services = 'crunchy' | 'hidive' | 'adn';
+type Services = 'crunchy' | 'hidive' | 'adn' | 'oceanveil';
 
 export const serviceContext = React.createContext<Services | undefined>(undefined);
 
@@ -22,7 +22,7 @@ const ServiceProvider: FCWithChildren = ({ children }) => {
 			<Typography color="text.primary" variant="h3" sx={{ textAlign: 'center', mb: 5 }}>
 				Please select your service
 			</Typography>
-			<Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+			<Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center', maxWidth: '100%' }}>
 				<Button
 					size="large"
 					variant="contained"
@@ -41,6 +41,9 @@ const ServiceProvider: FCWithChildren = ({ children }) => {
 				</Button>
 				<Button size="large" variant="contained" onClick={() => setService('adn')} startIcon={<Avatar src={'https://animationdigitalnetwork.com/favicon.ico'} />}>
 					AnimationDigitalNetwork
+				</Button>
+				<Button size="large" variant="contained" onClick={() => setService('oceanveil')} startIcon={<Avatar src={'https://oceanveil.net/favicon.ico'} />}>
+					OceanVeil
 				</Button>
 			</Box>
 		</Box>

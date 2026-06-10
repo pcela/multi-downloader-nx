@@ -41,6 +41,8 @@ export type MergerOptions = {
 	subtitles: SubtitleInput[];
 	chapters?: MergerInput[];
 	ccTag: string;
+	/** Comma-separated order for subtitle track types: signs, full, cc. Default full,signs,cc. */
+	subTrackOrder?: string;
 	output: string;
 	videoTitle?: string;
 	simul?: boolean;
@@ -58,10 +60,35 @@ export type MergerOptions = {
 	};
 };
 
+const SUB_TRACK_TYPES = ['signs', 'full', 'cc'] as const;
+function subType(sub: SubtitleInput): (typeof SUB_TRACK_TYPES)[number] {
+	if (sub.signs) return 'signs';
+	if (sub.closedCaption) return 'cc';
+	return 'full';
+}
+
 class Merger {
 	constructor(private options: MergerOptions) {
 		if (this.options.skipSubMux) this.options.subtitles = [];
 		if (this.options.videoTitle) this.options.videoTitle = this.options.videoTitle.replace(/"/g, "'");
+		if (this.options.subtitles.length > 0 && this.options.subTrackOrder) {
+			const order = this.options.subTrackOrder
+				.split(',')
+				.map((s) => s.trim().toLowerCase())
+				.filter(Boolean);
+			if (order.length > 0) {
+				const orderIdx = (type: (typeof SUB_TRACK_TYPES)[number]) => {
+					const i = order.indexOf(type);
+					return i === -1 ? order.length : i;
+				};
+				this.options.subtitles.sort((a, b) => {
+					const ia = orderIdx(subType(a));
+					const ib = orderIdx(subType(b));
+					if (ia !== ib) return ia - ib;
+					return (a.language.code || '').localeCompare(b.language.code || '');
+				});
+			}
+		}
 	}
 
 	public async createDelays() {

@@ -35,7 +35,7 @@ export type TAppArg<T extends boolean | string | number | unknown[], K = any> = 
 				default: T | undefined;
 				name?: string;
 		  };
-	service: Array<'crunchy' | 'hidive' | 'adn' | 'all'>;
+	service: Array<'crunchy' | 'hidive' | 'adn' | 'oceanveil' | 'all'>;
 	usage: string; // -(-)${name} will be added for each command,
 	demandOption?: true;
 	transformer?: (value: T) => K;
@@ -101,7 +101,7 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		describe: 'Set the page number for search results',
 		docDescribe: 'The output is organized in pages. Use this command to output the items for the given page',
 		group: 'search',
-		service: ['crunchy', 'hidive'],
+		service: ['crunchy', 'hidive', 'oceanveil'],
 		type: 'number',
 		usage: '${page}'
 	},
@@ -121,9 +121,92 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 	{
 		group: 'search',
 		name: 'new',
-		describe: 'Get last updated series list',
+		describe: 'Get newly added content (use --search-type episode for episode feed with air dates)',
 		docDescribe: true,
-		service: ['crunchy', 'hidive'],
+		service: ['crunchy', 'hidive', 'oceanveil'],
+		type: 'boolean',
+		usage: ''
+	},
+	{
+		group: 'search',
+		name: 'sfw',
+		describe: 'OceanVeil: use SFW catalog (default is mature/NSFW)',
+		docDescribe: 'When set, use the SFW catalog for search and new episodes (is_mature=false).',
+		service: ['oceanveil'],
+		type: 'boolean',
+		default: false,
+		usage: ''
+	},
+	{
+		group: 'search',
+		name: 'genre',
+		describe: 'OceanVeil: genre by name (e.g. --genre mature) or use --genre-id for ID',
+		docDescribe:
+			'OceanVeil only. Genre name to filter search (e.g. --genre "Young Adult"). Resolved to ID via API when /genres is available.' +
+			'\nIf no genre is resolved, search proceeds without a genre filter. Prefer --genre-id when you already know the numeric ID.',
+		service: ['oceanveil'],
+		type: 'string',
+		usage: '${genreName}'
+	},
+	{
+		group: 'search',
+		name: 'genre-id',
+		describe: 'OceanVeil: genre by ID (e.g. 1–5) when you know the ID',
+		docDescribe: 'OceanVeil only. Use when you have the ID; otherwise use --genre <name>. Use --list-genres to see id→name.',
+		service: ['oceanveil'],
+		type: 'number',
+		usage: '${genreId}'
+	},
+	{
+		group: 'search',
+		name: 'tags',
+		describe: 'OceanVeil: tag names (e.g. --tags glasses harem) or use --tag-ids for IDs',
+		docDescribe:
+			'OceanVeil only. Tag names to filter search (e.g. --tags glasses harem).' +
+			'\nNames are resolved to IDs via API. Multiple tags are AND-ed by OceanVeil API (must match all selected tags).' +
+			'\nUse together with --search "<term>" (e.g. --search "bl" --tags yaoi).',
+		service: ['oceanveil'],
+		type: 'array',
+		usage: '${tagNames}'
+	},
+	{
+		group: 'search',
+		name: 'tag-ids',
+		describe: 'OceanVeil: tag IDs when you know them (space-separated)',
+		docDescribe:
+			'OceanVeil only. Use when you already know IDs; otherwise use --tags <name1> <name2>.' +
+			'\nMultiple IDs are AND-ed by OceanVeil API (must match all selected tags).' +
+			'\nExample: --search "isekai" --tag-ids 59 22',
+		service: ['oceanveil'],
+		type: 'array',
+		usage: '${tagIds}'
+	},
+	{
+		group: 'search',
+		name: 'list-tags',
+		describe: 'OceanVeil: print all tags with ID and name (for use with --tag-ids)',
+		docDescribe: 'OceanVeil only. Fetches and prints tag ID → name so you can use --tag-ids. Use --sfw for SFW catalog tags.',
+		service: ['oceanveil'],
+		type: 'boolean',
+		usage: ''
+	},
+	{
+		group: 'search',
+		name: 'list-genres',
+		describe: 'OceanVeil: print all genres with ID and name (for use with --genre-id)',
+		docDescribe:
+			'OceanVeil only. Attempts to fetch and print genre ID → name for use with --genre-id.' +
+			'\nNote: API may return 404 for /genres on some catalogs/accounts. This command reports that condition and continues.',
+		service: ['oceanveil'],
+		type: 'boolean',
+		usage: ''
+	},
+	{
+		group: 'search',
+		name: 'list-filters',
+		describe: 'OceanVeil: print both genres and tags (ID → name) in one go',
+		docDescribe: 'OceanVeil only. Boolean flag: when set, prints both --list-genres and --list-tags output. Use --sfw for SFW catalog.',
+		service: ['oceanveil'],
 		type: 'boolean',
 		usage: ''
 	},
@@ -172,8 +255,12 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		group: 'dl',
 		alias: 'srz',
 		describe: 'Get season list by series ID',
-		docDescribe: 'Requested is the ID of a show not a season.',
-		service: ['crunchy'],
+		docDescribe:
+			'Requested is the ID of a show/series (not a season).' +
+			'\n- Hidive: matches Z.<id> search results' +
+			'\n- OceanVeil: numeric title ID from search/site; use with -e for episodes. Optional -s 1 only.' +
+			'\n  Alternatively download by API episode IDs alone with -e (no --srz); see --episode.',
+		service: ['crunchy', 'hidive', 'oceanveil'],
 		type: 'string',
 		usage: '${ID}'
 	},
@@ -181,8 +268,12 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		name: 's',
 		group: 'dl',
 		type: 'string',
-		describe: 'Set the season ID',
-		docDescribe: 'Used to set the season ID to download from',
+		describe: 'Set the primary content ID (service-specific)',
+		docDescribe:
+			'Service-specific selector:' +
+			'\n- Crunchyroll/Hidive/ADN: usually season ID' +
+			'\n- Hidive also supports series ID via --srz' +
+			'\n- OceanVeil: optional season selector (only season 1 supported when provided)',
 		service: ['all'],
 		usage: '${ID}'
 	},
@@ -193,7 +284,12 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		docDescribe:
 			'Set the episode(s) to download from any given show.' +
 			'\nFor multiple selection: 1-4 OR 1,2,3,4 ' +
-			'\nFor special episodes: S1-4 OR S1,S2,S3,S4 where S is the special letter',
+			'\nFor special episodes: S1-4 OR S1,S2,S3,S4 where S is the special letter' +
+			'\nOceanVeil with --srz <title_id>: comma-separated display numbers and/or anime_episodes API IDs' +
+			' (from URL …/anime_episodes/<id> or --new).' +
+			'\nOceanVeil without --srz: comma-separated numeric API episode IDs only; requires --auth;' +
+			' resolves each ID via the API (official mode, not a bug).' +
+			'\nOceanVeil: range syntax (1-4) is not parsed here; use commas.',
 		service: ['all'],
 		type: 'string',
 		usage: '${selection}',
@@ -202,8 +298,8 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 	{
 		name: 'extid',
 		group: 'dl',
-		describe: 'Set the external id to lookup/download',
-		docDescribe: 'Set the external id to lookup/download.' + '\nAllows you to download or view legacy Crunchyroll Ids ',
+		describe: 'Set the external id to lookup/download (Crunchyroll only)',
+		docDescribe: 'Crunchyroll only: legacy external object IDs for lookup/download.' + '\nNot used for OceanVeil, HIDIVE, or ADN (use their --srz / -s / -e flows).',
 		service: ['crunchy'],
 		type: 'string',
 		usage: '${selection}',
@@ -509,6 +605,18 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		usage: ''
 	},
 	{
+		name: 'noCC',
+		group: 'dl',
+		describe: 'Do not download closed caption subtitle tracks (only regular subtitles).',
+		docDescribe: true,
+		service: ['all'],
+		type: 'boolean',
+		usage: '',
+		default: {
+			default: false
+		}
+	},
+	{
 		name: 'dubLang',
 		describe:
 			'Set the language to download: ' +
@@ -584,7 +692,7 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		name: 'waittime',
 		group: 'dl',
 		type: 'number',
-		describe: 'Set the time the program waits between downloads. Set in millisecods',
+		describe: 'Set the time the program waits between downloads. Set in milliseconds',
 		docDescribe: true,
 		service: ['crunchy', 'hidive'],
 		usage: '${waittime}',
@@ -667,6 +775,25 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		}
 	},
 	{
+		name: 'tmpDir',
+		group: 'fileName',
+		describe: 'Directory for temporary download/mux files (segments, .ts). Defaults to content dir.',
+		docDescribe: true,
+		service: ['all'],
+		type: 'string',
+		usage: '${tmpDir}'
+	},
+	{
+		name: 'outputDir',
+		group: 'fileName',
+		describe:
+			'Directory for final muxed output (.mkv/.mp4). Supports the same ${variables} as fileName; relative paths are under the content directory. If unset, uses dir-path output (or content).',
+		docDescribe: true,
+		service: ['all'],
+		type: 'string',
+		usage: '${outputDir}'
+	},
+	{
 		name: 'numbers',
 		group: 'fileName',
 		describe: `Set how long a number in the title should be at least.\n${[
@@ -737,7 +864,7 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		group: 'util',
 		service: ['all'],
 		type: 'string',
-		choices: ['crunchy', 'hidive', 'adn'],
+		choices: ['crunchy', 'hidive', 'adn', 'oceanveil'],
 		usage: '${service}',
 		default: {
 			default: ''
@@ -788,6 +915,33 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		service: ['all'],
 		type: 'boolean',
 		usage: ''
+	},
+	{
+		name: 'archive',
+		describe: 'Path to archive file for this run (overrides config). Use different files for e.g. --downloadArchive per show.',
+		group: 'dl',
+		docDescribe: true,
+		service: ['all'],
+		type: 'string',
+		usage: '${path}'
+	},
+	{
+		name: 'removeArchive',
+		describe: 'Remove the given series/season from the archive (use with --service and -s or --srz).',
+		group: 'dl',
+		docDescribe: true,
+		service: ['all'],
+		type: 'boolean',
+		usage: ''
+	},
+	{
+		name: 'archiveAddEpisodes',
+		describe: 'Mark episodes as already in archive without downloading (e.g. "1,2,3" or "1-5"). Use with --service and -s or --srz.',
+		group: 'dl',
+		docDescribe: true,
+		service: ['all'],
+		type: 'string',
+		usage: '${episodeList}'
 	},
 	{
 		name: 'skipSubMux',
@@ -1025,6 +1179,18 @@ const args: TAppArg<boolean | number | string | unknown[]>[] = [
 		usage: '${tag}',
 		default: {
 			default: 'cc'
+		}
+	},
+	{
+		name: 'subTrackOrder',
+		describe: 'Order of subtitle track types in the muxed file (comma-separated: signs, full, cc). E.g. signs,full,cc puts signs first.',
+		docDescribe: true,
+		group: 'mux',
+		service: ['all'],
+		type: 'string',
+		usage: '${signs,full,cc}',
+		default: {
+			default: 'full,signs,cc'
 		}
 	},
 	{

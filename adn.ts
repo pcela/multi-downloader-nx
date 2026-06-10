@@ -18,9 +18,10 @@ import * as reqModule from './modules/module.fetch';
 import Merger, { Font, MergerInput, SubtitleInput } from './modules/module.merger';
 import streamdl from './modules/hls-download';
 import { console } from './modules/log';
+import RawOutputManager from './modules/module.raw-output';
 import { downloaded } from './modules/module.downloadArchive';
 import parseSelect from './modules/module.parseSelect';
-import parseFileName, { Variable } from './modules/module.filename';
+import parseFileName, { Variable, resolveFinalMuxOutputBase } from './modules/module.filename';
 import { AvailableFilenameVars } from './modules/module.args';
 import Helper from './modules/module.helper';
 
@@ -35,6 +36,9 @@ import { ADNPlayerConfig } from './@types/adnPlayerConfig';
 import { ADNStreams } from './@types/adnStreams';
 import { ADNSubtitles } from './@types/adnSubtitles';
 import { FetchParams } from './modules/module.fetch';
+
+/** Session uses this gateway; player config may return .fr/.de — mixed hosts cause 401 on player refresh. */
+const ADN_API_ORIGIN = 'https://gw.api.animationdigitalnetwork.com';
 
 export default class AnimationDigitalNetwork implements ServiceClass {
 	public cfg: yamlCfg.ConfigObject;
@@ -77,6 +81,10 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 
 		// load binaries
 		this.cfg.bin = await yamlCfg.loadBinCfg();
+		if (argv.tmpDir) {
+			this.cfg.dir.tmp = path.resolve(argv.tmpDir);
+			if (!fs.existsSync(this.cfg.dir.tmp)) fs.mkdirSync(this.cfg.dir.tmp, { recursive: true });
+		}
 		if (argv.allDubs) {
 			argv.dubLang = langsData.dubLanguageCodes;
 		}
@@ -88,9 +96,36 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			});
 		} else if (argv.search && argv.search.length > 2) {
 			//Search
-			await this.doSearch({ ...argv, search: argv.search as string });
+			// Handle raw output for search
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				const searchResults = await this.doSearch({ ...argv, search: argv.search as string });
+				await RawOutputManager.saveRawOutput({
+					service: 'adn',
+					data: searchResults,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'search',
+					description: `Search results for "${argv.search}"`
+				});
+				return;
+			} else {
+				// Normal search - doSearch() displays results internally
+				await this.doSearch({ ...argv, search: argv.search as string });
+			}
 		} else if (argv.s && !isNaN(parseInt(argv.s, 10)) && parseInt(argv.s, 10) > 0) {
 			const selected = await this.selectShow(parseInt(argv.s), argv.e, argv.but, argv.all);
+
+			// Handle raw output for show
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				await RawOutputManager.saveRawOutput({
+					service: 'adn',
+					data: selected,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'series',
+					description: `Show ${argv.s} data with episodes`
+				});
+				return true;
+			}
+
 			if (selected.isOk) {
 				for (const select of selected.value) {
 					if (!(await this.getEpisode(select, { ...argv, skipsubs: false }))) {
@@ -112,6 +147,26 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			result += characters.charAt(Math.floor(Math.random() * characters.length));
 		}
 		return result;
+	}
+
+	/** Same host as auth/refresh/config; matches vinetrimmer ADN _align_api_host. */
+	private alignAdnGatewayUrl(url: string): string {
+		try {
+			const parsed = new URL(url);
+			if (!/^gw\.api\.animationdigitalnetwork\./i.test(parsed.hostname)) {
+				return url;
+			}
+			const origin = new URL(ADN_API_ORIGIN);
+			if (parsed.hostname.toLowerCase() === origin.hostname) {
+				return url;
+			}
+			parsed.protocol = origin.protocol;
+			parsed.hostname = origin.hostname;
+			parsed.port = '';
+			return parsed.toString();
+		} catch {
+			return url;
+		}
 	}
 
 	private parseCookies(cookiesString: string | null): Record<string, string> {
@@ -442,7 +497,8 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 				audio: options.defaultAudio,
 				sub: options.defaultSub
 			},
-			ccTag: options.ccTag
+			ccTag: options.ccTag,
+			subTrackOrder: options.subTrackOrder
 		});
 		const bin = Merger.checkMerger(this.cfg.bin, options.mp4, options.forceMuxer);
 		// collect fonts info
@@ -529,7 +585,8 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			console.error("You don't have access to this video!");
 			return undefined;
 		}
-		const tokenReq = await this.req.getData(configuration.player.options.user.refreshTokenUrl || 'https://gw.api.animationdigitalnetwork.com/player/refresh/token', {
+		const refreshTokenUrl = this.alignAdnGatewayUrl(configuration.player.options.user.refreshTokenUrl || `${ADN_API_ORIGIN}/player/refresh/token`);
+		const tokenReq = await this.req.getData(refreshTokenUrl, {
 			method: 'POST',
 			headers: {
 				'X-Player-Refresh-Token': `${configuration.player.options.user.refreshToken}`
@@ -545,7 +602,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			token: string;
 		};
 
-		const linksUrl = configuration.player.options.video.url || `https://gw.api.animationdigitalnetwork.com/player/video/${data.id}/link`;
+		const linksUrl = this.alignAdnGatewayUrl(configuration.player.options.video.url || `${ADN_API_ORIGIN}/player/video/${data.id}/link`);
 		const key = this.generateRandomString(16);
 		const decryptionKey = key + '7fac1178830cfe0c';
 
@@ -570,7 +627,8 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			headers: {
 				'X-Player-Token': authorization,
 				'X-Target-Distribution': this.locale
-			}
+			},
+			useProxy: true
 		});
 		if (!streamsRequest.ok || !streamsRequest.res) {
 			if (streamsRequest.error?.res!.status == 403 || streamsRequest.res?.status == 403) {
@@ -581,6 +639,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 			return undefined;
 		}
 		const streams = (await streamsRequest.res.json()) as ADNStreams;
+		let streamEntries: { streamName: string; audDub: langsData.LanguageItem }[] = [];
 		for (const streamName in streams.links.streaming) {
 			let audDub: langsData.LanguageItem;
 			if (this.jpnStrings.includes(streamName)) {
@@ -596,11 +655,13 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 				console.error(`Language ${streamName} not recognized, please report this.`);
 				continue;
 			}
-
-			if (!options.dubLang.includes(audDub.code)) {
-				continue;
-			}
-
+			if (!options.dubLang.includes(audDub.code)) continue;
+			streamEntries.push({ streamName, audDub });
+		}
+		if (options.dlVideoOnce && streamEntries.length > 1 && options.dubLang?.length) {
+			streamEntries = Helper.reorderForFirstDubVideo(streamEntries, (e) => e.audDub?.code, options.dubLang[0]);
+		}
+		for (const { streamName, audDub } of streamEntries) {
 			console.info(`Requesting: [${data.id}] ${mediaName} (${audDub.name})`);
 
 			variables.push(
@@ -623,12 +684,19 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 				})
 			);
 
-			console.info('Playlists URL: %s', streams.links.streaming[streamName].auto);
+			const streamLinks = streams.links.streaming[streamName];
+			const streamPlaylistUrl = streamLinks.auto || streamLinks.fhd || streamLinks.hd || streamLinks.sd || streamLinks.mobile;
+			console.info('Playlists URL: %s', streamPlaylistUrl);
 
 			let tsFile = undefined;
 
 			if (!dlFailed && !options.novids) {
-				const streamPlaylistsLocationReq = await this.req.getData(streams.links.streaming[streamName].auto);
+				if (!streamPlaylistUrl) {
+					console.error(`No playlist URL found for stream '${streamName}'.`);
+					console.error(`Available keys: ${Object.keys(streamLinks || {}).join(', ') || 'none'}`);
+					return undefined;
+				}
+				const streamPlaylistsLocationReq = await this.req.getData(streamPlaylistUrl);
 				if (!streamPlaylistsLocationReq.ok || !streamPlaylistsLocationReq.res) {
 					console.error("CAN'T FETCH VIDEO PLAYLIST LOCATION!");
 					return undefined;
@@ -665,7 +733,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 					for (const pl of streamPlaylists.playlists ?? []) {
 						// set quality
 						const plResolution = pl.attributes.RESOLUTION;
-						const plResolutionText = `${plResolution?.width}x${plResolution?.height}`;
+						const plResolutionText = plResolution?.width && plResolution?.height ? `${plResolution.width}x${plResolution.height}` : 'unknown';
 						// set codecs
 						const plCodecs = pl.attributes.CODECS;
 						// parse uri
@@ -692,7 +760,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 							plStreams[plServer][plResolutionText] = pl.uri;
 						}
 						// set plQualityStr
-						const plBandwidth = Math.round(pl.attributes?.BANDWIDTH ?? 0 / 1024);
+						const plBandwidth = Math.round((pl.attributes?.BANDWIDTH ?? 0) / 1024);
 						const qualityStrAdd = `${plResolutionText} (${plBandwidth}KiB/s)`;
 						const qualityStrRegx = new RegExp(qualityStrAdd.replace(/([:()/])/g, '\\$1'), 'm');
 						const qualityStrMatch = !plQuality
@@ -753,8 +821,24 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 						console.info(`Selected quality: ${Object.keys(plSelectedList).find((a) => plSelectedList[a] === selPlUrl)} @ ${plSelectedServer}`);
 						console.info('Stream URL:', selPlUrl);
 						// TODO check filename
-						fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-						const outFile = parseFileName(options.fileName + '.' + audDub.name, variables, options.numbers, options.override).join(path.sep);
+						fileName = parseFileName(
+							options.fileName,
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
+						const outFile = parseFileName(
+							options.fileName + '.' + audDub.name,
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
 						console.info(`Output filename: ${outFile}`);
 						const chunkPage = await this.req.getData(selPlUrl);
 						if (!chunkPage.ok || !chunkPage.res) {
@@ -777,7 +861,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 							const mathParts = Math.ceil(totalParts / options.partsize);
 							const mathMsg = `(${mathParts}*${options.partsize})`;
 							console.info('Total parts in stream:', totalParts, mathMsg);
-							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 							const dirName = path.dirname(tsFile);
 							if (!fs.existsSync(dirName)) {
 								fs.mkdirSync(dirName, { recursive: true });
@@ -792,7 +876,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 								override: options.force,
 								callback: options.callbackMaker
 									? options.callbackMaker({
-											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.content.length) : outFile}`,
+											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.tmp!.length) : outFile}`,
 											image: data.image,
 											parent: {
 												title: data.show.title
@@ -820,7 +904,9 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 				}
 			} else if (options.novids) {
 				console.info('Downloading skipped!');
-				fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
+				fileName = parseFileName(options.fileName, variables, options.numbers, options.override, options.dubLang || [], options.dlsubs || [], options.ccTag || 'cc').join(
+					path.sep
+				);
 			}
 			await this.sleep(options.waittime);
 		}
@@ -847,9 +933,25 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 
 			if (compiledChapters.length > 0) {
 				try {
-					fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-					const outFile = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-					const tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+					fileName = parseFileName(
+						options.fileName,
+						variables,
+						options.numbers,
+						options.override,
+						options.dubLang || [],
+						options.dlsubs || [],
+						options.ccTag || 'cc'
+					).join(path.sep);
+					const outFile = parseFileName(
+						options.fileName,
+						variables,
+						options.numbers,
+						options.override,
+						options.dubLang || [],
+						options.dlsubs || [],
+						options.ccTag || 'cc'
+					).join(path.sep);
+					const tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 					const dirName = path.dirname(tsFile);
 					if (!fs.existsSync(dirName)) {
 						fs.mkdirSync(dirName, { recursive: true });
@@ -925,7 +1027,7 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 					if (path.isAbsolute(sxData.file)) {
 						sxData.path = sxData.file;
 					} else {
-						sxData.path = path.join(this.cfg.dir.content, sxData.file);
+						sxData.path = path.join(this.cfg.dir.tmp!, sxData.file);
 					}
 					const dirName = path.dirname(sxData.path);
 					if (!fs.existsSync(dirName)) {
@@ -1004,7 +1106,18 @@ export default class AnimationDigitalNetwork implements ServiceClass {
 		return {
 			error: dlFailed,
 			data: files,
-			fileName: fileName ? (path.isAbsolute(fileName) ? fileName : path.join(this.cfg.dir.content, fileName)) || './unknown' : './unknown'
+			fileName: resolveFinalMuxOutputBase({
+				fileName,
+				outputDirOption: options.outputDir as string | undefined,
+				cfgOutput: this.cfg.dir.output ?? this.cfg.dir.content!,
+				cfgContent: this.cfg.dir.content,
+				variables,
+				numbers: options.numbers,
+				override: options.override,
+				dubLang: options.dubLang || [],
+				dlsubs: options.dlsubs || [],
+				ccTag: options.ccTag || 'cc'
+			})
 		};
 	}
 

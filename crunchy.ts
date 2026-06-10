@@ -18,6 +18,7 @@ import * as yamlCfg from './modules/module.cfg-loader';
 import * as yargs from './modules/module.app-args';
 import Merger, { Font, MergerInput, SubtitleInput } from './modules/module.merger';
 import { canDecrypt, getKeysPRD, getKeysWVD, cdm } from './modules/cdm';
+import RawOutputManager from './modules/module.raw-output';
 
 // load req
 import { domain, api } from './modules/module.api-urls';
@@ -25,8 +26,8 @@ import * as reqModule from './modules/module.fetch';
 import { CrunchySearch } from './@types/crunchySearch';
 import { CrunchyEpisodeList, CrunchyEpisode } from './@types/crunchyEpisodeList';
 import { CrunchyDownloadOptions, CrunchyEpMeta, CrunchyMuxOptions, CrunchyMultiDownload, DownloadedMedia, ParseItem, SeriesSearch, SeriesSearchItem } from './@types/crunchyTypes';
-import { ObjectInfo } from './@types/objectInfo';
-import parseFileName, { Variable } from './modules/module.filename';
+import { CrunchyObject, ObjectInfo } from './@types/objectInfo';
+import parseFileName, { Variable, resolveFinalMuxOutputBase } from './modules/module.filename';
 import { CrunchyStreams, PlaybackData } from './@types/playbackData';
 import { downloaded } from './modules/module.downloadArchive';
 import parseSelect from './modules/module.parseSelect';
@@ -50,6 +51,9 @@ export type sxItem = {
 	title: string;
 	fonts: Font[];
 };
+
+/** Pause between episodes when batching with --all (only if waittime is unset) */
+const BATCH_EPISODE_WAIT_MS = 5000;
 
 export default class Crunchy implements ServiceClass {
 	public cfg: yamlCfg.ConfigObject;
@@ -81,6 +85,10 @@ export default class Crunchy implements ServiceClass {
 
 		// load binaries
 		this.cfg.bin = await yamlCfg.loadBinCfg();
+		if (argv.tmpDir) {
+			this.cfg.dir.tmp = path.resolve(argv.tmpDir);
+			if (!fs.existsSync(this.cfg.dir.tmp)) fs.mkdirSync(this.cfg.dir.tmp, { recursive: true });
+		}
 		if (argv.allDubs) {
 			argv.dubLang = langsData.dubLanguageCodes;
 		}
@@ -104,15 +112,50 @@ export default class Crunchy implements ServiceClass {
 			await this.refreshToken();
 			await this.getCmsData();
 		} else if (argv.new) {
-			await this.refreshToken();
+			if (argv.searchType === 'episode') {
+				await this.doAnonymousAuth();
+			} else {
+				await this.refreshToken();
+			}
 			await this.getNewlyAdded(argv.page, argv.searchType, argv.raw, argv.rawoutput);
 		} else if (argv.search && argv.search.length > 2) {
 			await this.refreshToken();
-			await this.doSearch({ ...argv, search: argv.search as string });
+
+			// Handle raw output for search
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				const searchResults = await this.doSearch({ ...argv, search: argv.search as string });
+				await RawOutputManager.saveRawOutput({
+					service: 'crunchy',
+					data: searchResults,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'search',
+					description: `Search results for "${argv.search}"`
+				});
+				return;
+			} else {
+				// Normal search - doSearch() displays results internally
+				await this.doSearch({ ...argv, search: argv.search as string });
+			}
 		} else if (argv.series && argv.series.match(/^[0-9A-Z]{9,}$/)) {
 			await this.refreshToken();
+
+			// Handle raw output for series
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				const rawSelected = await this.downloadFromSeriesID(argv.series, { ...argv, all: argv.all || (!argv.e && !argv.but) });
+				await RawOutputManager.saveRawOutput({
+					service: 'crunchy',
+					data: rawSelected,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'series',
+					description: `Series ${argv.series} data with episodes`
+				});
+				return true;
+			}
+
+			// Only log series info if not using raw output
 			await this.logSeriesById(argv.series as string);
-			const selected = await this.downloadFromSeriesID(argv.series, { ...argv });
+
+			const selected = await this.downloadFromSeriesID(argv.series, { ...argv, all: argv.all || (!argv.e && !argv.but) });
 			if (selected.isOk) {
 				for (const select of selected.value) {
 					if (!(await this.downloadEpisode(select, { ...argv, skipsubs: false }, true))) {
@@ -140,7 +183,7 @@ export default class Crunchy implements ServiceClass {
 				console.info('One show can only be downloaded with one dub. Use --srz instead.');
 			}
 			argv.dubLang = [argv.dubLang[0]];
-			const selected = await this.getSeasonById(argv.s, argv.numbers, argv.e, argv.but, argv.all);
+			const selected = await this.getSeasonById(argv.s, argv.numbers, argv.e, argv.but, argv.all, argv.absolute as boolean | undefined);
 			if (selected.isOk) {
 				for (const select of selected.value) {
 					if (!(await this.downloadEpisode(select, { ...argv, skipsubs: false }))) {
@@ -156,7 +199,7 @@ export default class Crunchy implements ServiceClass {
 				console.info('One show can only be downloaded with one dub. Use --srz instead.');
 			}
 			argv.dubLang = [argv.dubLang[0]];
-			const selected = await this.getObjectById(argv.e, false);
+			const selected = await this.getObjectById(argv.e, false, false, argv.absolute as boolean | undefined);
 			for (const select of selected as Partial<CrunchyEpMeta>[]) {
 				if (!(await this.downloadEpisode(select as CrunchyEpMeta, { ...argv, skipsubs: false }))) {
 					console.error(`Unable to download selected episode ${select.episodeNumber}`);
@@ -170,7 +213,7 @@ export default class Crunchy implements ServiceClass {
 				console.info('One show can only be downloaded with one dub. Use --srz instead.');
 			}
 			argv.dubLang = [argv.dubLang[0]];
-			const selected = await this.getObjectById(argv.extid, false, true);
+			const selected = await this.getObjectById(argv.extid, false, true, argv.absolute as boolean | undefined);
 			for (const select of selected as Partial<CrunchyEpMeta>[]) {
 				if (!(await this.downloadEpisode(select as CrunchyEpMeta, { ...argv, skipsubs: false }))) {
 					console.error(`Unable to download selected episode ${select.episodeNumber}`);
@@ -350,7 +393,9 @@ export default class Crunchy implements ServiceClass {
 					fs.rmSync(fontLoc, { recursive: true, force: true });
 				}
 				try {
-					fs.existsSync(fontFolder);
+					if (!fs.existsSync(fontFolder)) {
+						fs.mkdirSync(fontFolder, { recursive: true });
+					}
 				} catch (e) {
 					console.info('');
 				}
@@ -491,6 +536,12 @@ export default class Crunchy implements ServiceClass {
 		});
 	}
 
+	private episodeBatchPauseMs(options: CrunchyDownloadOptions, isSeries?: boolean): number {
+		if (options.waittime > 0) return 0;
+		if (options.all || isSeries) return BATCH_EPISODE_WAIT_MS;
+		return 0;
+	}
+
 	public async loginWithToken(refreshToken: string) {
 		const basic = atob(api.basic_auth_token);
 		const client = basic.split(':');
@@ -548,9 +599,14 @@ export default class Crunchy implements ServiceClass {
 			/*if (ifNeeded)
         return;*/
 			if (!(Date.now() > new Date(this.token.expires).getTime()) && ifNeeded) {
+				// Even if token is valid, ensure CMS token is available
+				if (this.token.refresh_token) {
+					await this.getProfile(silent);
+				}
+				await this.getCMStoken(ifNeeded);
 				return;
 			} else {
-				//console.info('[WARN] The token has expired compleatly. I will try to refresh the token anyway, but you might have to reauth.');
+				//console.info('[WARN] The token has expired completely. I will try to refresh the token anyway, but you might have to reauth.');
 			}
 
 			const basic = atob(api.basic_auth_token);
@@ -681,7 +737,7 @@ export default class Crunchy implements ServiceClass {
 			q: data.search,
 			n: '5',
 			start: data.page ? `${(data.page - 1) * 5}` : '0',
-			type: data['search-type'] ?? getDefault('search-type', this.cfg.cli),
+			type: ((data as any).searchType || data['search-type']) ?? getDefault('search-type', this.cfg.cli),
 			locale: this.locale
 		}).toString();
 		const searchReq = await this.req.getData(`${api.search}?${searchParams}`, searchReqOpts);
@@ -858,9 +914,12 @@ export default class Crunchy implements ServiceClass {
 			if (!iMetadata.hide_season_title && iMetadata.season_title) {
 				iTitle.unshift(iMetadata.season_title);
 			}
+			if (iMetadata.series_title && iMetadata.series_title !== iMetadata.season_title) {
+				iTitle.unshift(iMetadata.series_title);
+			}
 		}
 		if (item.is_premium_only) {
-			iTitle[0] = `☆ ${iTitle[0]}`;
+			iTitle[0] = `? ${iTitle[0]}`;
 		}
 		// display metadata
 		if (item.hide_metadata) {
@@ -891,7 +950,7 @@ export default class Crunchy implements ServiceClass {
 		console.info(
 			'%s%s[%s] %s%s%s',
 			''.padStart(item.isSelected ? pad - 1 : pad, ' '),
-			item.isSelected ? '✓' : '',
+			item.isSelected ? '?' : '',
 			objects_ids.join('|'),
 			iTitle.join(' - '),
 			showObjectMetadata ? ` (${oMetadata.join(', ')})` : '',
@@ -899,6 +958,15 @@ export default class Crunchy implements ServiceClass {
 		);
 		if (item.last_public) {
 			console.info(''.padStart(pad + 1, ' '), '- Last updated:', item.last_public);
+		}
+		if (iMetadata.premium_available_date) {
+			console.info(''.padStart(pad + 1, ' '), '- Premium available:', iMetadata.premium_available_date);
+		}
+		if (iMetadata.sequence_number !== undefined) {
+			console.info(''.padStart(pad + 1, ' '), '- Sequence number:', iMetadata.sequence_number);
+		}
+		if (iMetadata.audio_locale && item.type == 'episode') {
+			console.info(''.padStart(pad + 1, ' '), '- Audio:', iMetadata.audio_locale);
 		}
 		if (item.subtitle_locales) {
 			iMetadata.subtitle_locales = item.subtitle_locales;
@@ -1018,17 +1086,30 @@ export default class Crunchy implements ServiceClass {
 			console.error('Authentication required!');
 			return;
 		}
+
+		const isEpisodeFeed = (type || 'series') === 'episode';
+		const startTime = Date.now();
+
+		// Pre-fetch auth silently if episode feed, so fallback doesn't log mid-list
+		if (isEpisodeFeed) {
+			await this.refreshToken(true, true);
+		}
+
 		const newlyAddedReqOpts = {
 			headers: {
 				Authorization: `Bearer ${this.token.access_token}`,
 				...api.crunchyDefHeader
 			}
 		};
+		// Different limits for series vs episodes
+		const itemsPerPage = isEpisodeFeed ? '2500' : '25';
+		const paginationSize = isEpisodeFeed ? 2500 : 25;
+
 		const newlyAddedParams = new URLSearchParams({
 			sort_by: 'newly_added',
 			type: type || 'series',
-			n: '50',
-			start: (page ? (page - 1) * 25 : 0).toString(),
+			n: itemsPerPage,
+			start: (page ? (page - 1) * paginationSize : 0).toString(),
 			preferred_audio_language: 'ja-JP',
 			force_locale: '',
 			locale: this.locale
@@ -1053,18 +1134,130 @@ export default class Crunchy implements ServiceClass {
 			return;
 		}
 
+		const cutoffDate = new Date();
+		cutoffDate.setDate(cutoffDate.getDate() - 8);
+
 		console.info('Newly added:');
 		for (const i of newlyAddedResults.items) {
-			await this.logObject(i, 2);
+			if (isEpisodeFeed) {
+				const premDate = i.episode_metadata?.premium_available_date ?? i.premium_available_date;
+				if (!premDate || new Date(premDate) < cutoffDate) continue;
+			}
+			await this.logObject(i, 2, !isEpisodeFeed);
 		}
+
+		// Fallback runs BEFORE the total line, and auth is already fresh so no mid-list logging
+		if (isEpisodeFeed) {
+			await this.getRecentEpisodesFallback(newlyAddedResults.items);
+		}
+
 		// calculate pages
 		const itemPad = parseInt(new URL(newlyAddedResults.__href__, domain.cr_api).searchParams.get('start') as string);
-		const pageCur = itemPad > 0 ? Math.ceil(itemPad / 25) + 1 : 1;
-		const pageMax = Math.ceil(newlyAddedResults.total / 25);
-		console.info(`  Total results: ${newlyAddedResults.total} (Page: ${pageCur}/${pageMax})`);
+		const pageCur = itemPad > 0 ? Math.ceil(itemPad / paginationSize) + 1 : 1;
+		const pageMax = Math.ceil(newlyAddedResults.total / paginationSize);
+		const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+		console.info(`  Total results: ${newlyAddedResults.total} (Page: ${pageCur}/${pageMax}) [${elapsed}s]`);
 	}
 
-	public async getSeasonById(id: string, numbers: number, e: string | undefined, but: boolean, all: boolean): Promise<ResponseBase<CrunchyEpMeta[]>> {
+	private async getRecentEpisodesFallback(existingItems: any[]) {
+		try {
+			const cutoffDate = new Date();
+			cutoffDate.setDate(cutoffDate.getDate() - 8);
+
+			// Collect existing episode IDs
+			const existingEpisodeIds = new Set<string>(existingItems.map((item) => item.id).filter(Boolean));
+
+			// Collect series IDs from feed items (only from this week)
+			const seriesIds = new Set<string>();
+			for (const item of existingItems) {
+				const uploadDate = item.episode_metadata?.premium_available_date ?? item.premium_available_date;
+				if (!uploadDate) continue;
+				if (new Date(uploadDate) < cutoffDate) continue;
+				const sid = item.episode_metadata?.series_id ?? item.series_id;
+				if (sid) seriesIds.add(sid);
+			}
+
+			if (seriesIds.size === 0) return;
+
+			// Auth is already fresh from getNewlyAdded — no refreshToken call here
+			const AuthHeaders = {
+				headers: {
+					Authorization: `Bearer ${this.token.access_token}`,
+					...api.crunchyDefHeader
+				}
+			};
+
+			const seriesArr = [...seriesIds];
+			const CONCURRENCY = 5;
+			let checked = 0;
+			process.stdout.write(`  Checking ${seriesArr.length} series for unlisted recent episodes... (0/${seriesArr.length})\r`);
+
+			const checkSeries = async (seriesId: string): Promise<any[]> => {
+				const found: any[] = [];
+				try {
+					const seasonsReq = await this.req.getData(
+						`${api.content_cms}/series/${seriesId}/seasons?force_locale=&preferred_audio_language=ja-JP&locale=${this.locale}`,
+						AuthHeaders
+					);
+					if (!seasonsReq.ok || !seasonsReq.res) return found;
+					const seasonsData = await seasonsReq.res.json();
+					if (!seasonsData?.data?.length) return found;
+
+					// Check all seasons in parallel
+					const seasons: any[] = seasonsData.data;
+
+					const fetchSeasonEpisodes = async (season: any): Promise<any[]> => {
+						const params = new URLSearchParams();
+						params.set('force_locale', '');
+						params.set('preferred_audio_language', 'ja-JP');
+						params.set('locale', this.locale);
+						params.set('season_id', season.id);
+						if (this.cmsToken.cms?.policy) params.set('Policy', this.cmsToken.cms.policy);
+						if (this.cmsToken.cms?.signature) params.set('Signature', this.cmsToken.cms.signature);
+						if (this.cmsToken.cms?.key_pair_id) params.set('Key-Pair-Id', this.cmsToken.cms.key_pair_id);
+						const reqEpsOpts = [api.cms_bucket, this.cmsToken.cms?.bucket, '/episodes?', params.toString()].join('');
+						const epsReq = await this.req.getData(reqEpsOpts, AuthHeaders);
+						if (!epsReq.ok || !epsReq.res) return [];
+						const epsData = await epsReq.res.json();
+						return epsData?.items ?? [];
+					};
+
+					const episodeLists = await Promise.all(seasons.map((season) => fetchSeasonEpisodes(season)));
+					for (const episodes of episodeLists) {
+						for (const episode of episodes) {
+							const uploadDate = episode.premium_available_date ?? episode.upload_date;
+							if (!uploadDate || new Date(uploadDate) < cutoffDate) continue;
+							if (existingEpisodeIds.has(episode.id)) continue;
+							existingEpisodeIds.add(episode.id);
+							episode.external_id = `EPI.${episode.id}`;
+							episode.is_premium_only = false;
+							found.push(episode);
+						}
+					}
+				} catch (error) {
+					if (this.debug) console.warn(`Failed to fetch data for series ${seriesId}:`, error);
+				}
+				return found;
+			};
+
+			for (let i = 0; i < seriesArr.length; i += CONCURRENCY) {
+				const batch = seriesArr.slice(i, i + CONCURRENCY);
+				const results = await Promise.all(batch.map((sid) => checkSeries(sid)));
+				checked += batch.length;
+				process.stdout.write(`  Checking ${seriesArr.length} series for unlisted recent episodes... (${checked}/${seriesArr.length})\r`);
+				for (const episodes of results) {
+					for (const episode of episodes) {
+						await this.logObject(episode, 2, false);
+					}
+				}
+			}
+			process.stdout.write(' '.repeat(70) + '\r');
+		} catch (error) {
+			console.error('Error in fallback episode fetch:', error);
+		}
+	}
+
+	public async getSeasonById(id: string, numbers: number, e: string | undefined, but: boolean, all: boolean, absolute?: boolean): Promise<ResponseBase<CrunchyEpMeta[]>> {
 		if (!this.cmsToken.cms) {
 			console.error('Authentication required!');
 			return { isOk: false, reason: new Error('Authentication required') };
@@ -1180,7 +1373,12 @@ export default class Crunchy implements ServiceClass {
 				epNumList.ep.push(parseInt(epNum, 10));
 			}
 			const selEpId = isSpecial ? 'S' + epNumList.sp.toString().padStart(epNumLen, '0') : '' + parseInt(epNum, 10).toString().padStart(epNumLen, '0');
-			// set data
+			// set data: --absolute ? use episode_number (absolute); else ? episode or selEpId (relative). Matches itemSelectMultiDub.
+			const epNumForMeta = absolute
+				? typeof (item as { episode_number?: number }).episode_number === 'number'
+					? String((item as { episode_number: number }).episode_number)
+					: item.episode
+				: (item.episode ?? selEpId);
 			const images = (item.images?.thumbnail ?? [[{ source: '/notFound.png' }]])[0];
 			const epMeta: CrunchyEpMeta = {
 				data: [
@@ -1195,7 +1393,7 @@ export default class Crunchy implements ServiceClass {
 				],
 				seriesTitle: item.series_title,
 				seasonTitle: item.season_title,
-				episodeNumber: item.episode,
+				episodeNumber: epNumForMeta,
 				episodeTitle: item.title,
 				seasonID: item.season_id,
 				season: item.season_number,
@@ -1271,11 +1469,16 @@ export default class Crunchy implements ServiceClass {
 					[data.e]
 				);
 			}
+			const batchPause = this.episodeBatchPauseMs(options, isSeries);
+			if (batchPause > 0) {
+				console.info(`[INFO] Pausing ${batchPause / 1000}s before next episode (batch download)`);
+				await this.sleep(batchPause);
+			}
 		}
 		return true;
 	}
 
-	public async getObjectById(e?: string, earlyReturn?: boolean, external_id?: boolean): Promise<ObjectInfo | Partial<CrunchyEpMeta>[] | undefined> {
+	public async getObjectById(e?: string, earlyReturn?: boolean, external_id?: boolean, absolute?: boolean): Promise<ObjectInfo | Partial<CrunchyEpMeta>[] | undefined> {
 		if (!this.cmsToken.cms) {
 			console.error('Authentication required!');
 			return [];
@@ -1311,6 +1514,9 @@ export default class Crunchy implements ServiceClass {
 					console.error('Objects Request FAILED!');
 					if (extIdReq.error && extIdReq.error.res && extIdReq.error.res.body) {
 						console.info('[INFO] Body:', extIdReq.error.res.body);
+					}
+					if (extIdReq.error) {
+						console.info('[INFO] Error:', extIdReq.error);
 					}
 					continue;
 				}
@@ -1438,7 +1644,15 @@ export default class Crunchy implements ServiceClass {
 				];
 				epMeta.seriesTitle = item.episode_metadata.series_title;
 				epMeta.seasonTitle = item.episode_metadata.season_title;
-				epMeta.episodeNumber = item.episode_metadata.episode;
+				// Without --absolute: use sequence_number (season-relative). With --absolute: use episode_number. Objects API may return episode as absolute.
+				const em = item.episode_metadata;
+				epMeta.episodeNumber = absolute
+					? em.episode_number != null && em.episode_number !== undefined
+						? String(em.episode_number)
+						: em.episode
+					: typeof em.sequence_number === 'number' && !Number.isNaN(em.sequence_number)
+						? String(em.sequence_number)
+						: em.episode;
 				epMeta.episodeTitle = item.title;
 				epMeta.season = item.episode_metadata.season_number;
 			} else if (item.movie_listing_metadata) {
@@ -1478,13 +1692,22 @@ export default class Crunchy implements ServiceClass {
 				}
 				selectedMedia.push(epMeta);
 				item.isSelected = true;
-			} else if (item.__links__) {
+			} else if (item.__links__ && item.__links__.streams) {
 				epMeta.data[0].playback = item.__links__.streams.href;
 				if (!item.playback) {
 					item.playback = item.__links__.streams.href;
 				}
 				selectedMedia.push(epMeta);
 				item.isSelected = true;
+			} else if (item.episode_metadata && item.episode_metadata.versions && item.episode_metadata.versions.length > 0) {
+				// Fallback: construct playback URL from version data
+				const version = item.episode_metadata.versions.find((v) => v.audio_locale === 'en-US') || item.episode_metadata.versions[0];
+				if (version && version.guid) {
+					epMeta.data[0].playback = `https://cr-play-service.prd.crunchyrollsvc.com/v3/${version.guid}/androidtv/play`;
+					epMeta.data[0].mediaId = 'E:' + item.id;
+					selectedMedia.push(epMeta);
+					item.isSelected = true;
+				}
 			}
 			await this.logObject(item, 2);
 		}
@@ -1536,6 +1759,106 @@ export default class Crunchy implements ServiceClass {
 		}
 	}
 
+	/**
+	 * Attempts to get evs3 manifest with 1080p quality when static manifest only provides lower quality
+	 * @returns Updated stream data if evs3 provides 1080p, null otherwise
+	 */
+	private async tryEvs3For1080p(
+		mediaId: string,
+		currentStaticUrl: string,
+		currentMaxQuality: number,
+		authHeaders: FetchParams,
+		audioLocale: string,
+		serverIndex: number
+	): Promise<{
+		stream: CrunchyPlayStream;
+		playlists: any;
+		servers: string[];
+		videos: any[];
+		audios: any[];
+	} | null> {
+		if (currentMaxQuality >= 1080 || !currentStaticUrl.includes('/static/')) {
+			return null; // Already has 1080p or not a static manifest
+		}
+
+		try {
+			console.warn('[WARN] 1080p not available (max %dp) from static manifest. Trying evs3 endpoint for 1080p...', currentMaxQuality);
+
+			const crPlayServiceReq = await this.req.getData(`https://cr-play-service.prd.crunchyrollsvc.com/v1/${mediaId}/tv/android_tv/play`, authHeaders);
+
+			if (!crPlayServiceReq.ok || !crPlayServiceReq.res) {
+				return null;
+			}
+
+			const crPlayServiceStream = (await crPlayServiceReq.res.json()) as CrunchyPlayStream;
+
+			if (!crPlayServiceStream.url || !crPlayServiceStream.url.includes('/evs3/')) {
+				return null;
+			}
+
+			console.info('[INFO] Found evs3 manifest, checking for 1080p...');
+
+			// Fetch and parse evs3 manifest
+			const evs3PlaylistsReq = await this.req.getData(crPlayServiceStream.url, authHeaders);
+			if (!evs3PlaylistsReq.ok || !evs3PlaylistsReq.res) {
+				return null;
+			}
+
+			const evs3PlaylistBody = await evs3PlaylistsReq.res.text();
+			if (!evs3PlaylistBody.match('MPD')) {
+				return null;
+			}
+
+			const evs3Playlists = await parse(
+				evs3PlaylistBody,
+				langsData.findLang(langsData.fixLanguageTag(audioLocale) || ''),
+				crPlayServiceStream.url.match(/.*\.urlset\//)?.[0]
+			);
+
+			const evs3Servers = Object.keys(evs3Playlists);
+			if (evs3Servers.length === 0) {
+				return null;
+			}
+
+			const evs3SelectedServer = evs3Servers[serverIndex - 1] || evs3Servers[0];
+			const evs3SelectedList = evs3Playlists[evs3SelectedServer];
+
+			const evs3Videos = evs3SelectedList.video.map((item) => {
+				return {
+					...item,
+					resolutionText: `${item.quality.width}x${item.quality.height} (${Math.round(item.bandwidth / 1024)}KiB/s)`
+				};
+			});
+
+			const evs3MaxQuality = evs3Videos.length > 0 ? Math.max(...evs3Videos.map((v) => v.quality.height)) : 0;
+
+			if (evs3MaxQuality >= 1080) {
+				const evs3Audios = evs3SelectedList.audio.map((item) => {
+					return {
+						...item,
+						resolutionText: `${Math.round(item.bandwidth / 1000)}kB/s`
+					};
+				});
+
+				console.info('[INFO] Using evs3 manifest with %dp quality (was %dp)', evs3MaxQuality, currentMaxQuality);
+
+				return {
+					stream: crPlayServiceStream,
+					playlists: evs3Playlists,
+					servers: evs3Servers,
+					videos: evs3Videos.sort((a, b) => a.quality.width - b.quality.width),
+					audios: evs3Audios.sort((a, b) => a.bandwidth - b.bandwidth)
+				};
+			} else {
+				console.warn('[WARN] evs3 manifest also only has %dp max quality', evs3MaxQuality);
+				return null;
+			}
+		} catch (err) {
+			console.warn('[WARN] Failed to get evs3 manifest: %s', err instanceof Error ? err.message : String(err));
+			return null;
+		}
+	}
+
 	public async downloadMediaList(
 		medias: CrunchyEpMeta,
 		options: CrunchyDownloadOptions
@@ -1570,6 +1893,11 @@ export default class Crunchy implements ServiceClass {
 
 		let dlFailed = false;
 		let dlVideoOnce = false; // Variable to save if best selected video quality was downloaded
+
+		// When dlVideoOnce and multiple dubs: use video from first language in dubLang (#799)
+		if (options.dlVideoOnce && medias.data.length > 1 && options.dubLang?.length) {
+			medias.data = Helper.reorderForFirstDubVideo(medias.data, (d) => d.lang?.code, options.dubLang[0]);
+		}
 
 		for (const mMeta of medias.data) {
 			console.info(`Requesting: [${mMeta.mediaId}] ${mediaName}`);
@@ -1660,16 +1988,19 @@ export default class Crunchy implements ServiceClass {
 						}
 					}
 
-					if (chapters.length > 0) {
-						chapters.sort((a, b) => a.start - b.start);
+					// Filter out null chapters
+					const validChapters = chapters.filter((chapter) => chapter != null);
+
+					if (validChapters.length > 0) {
+						validChapters.sort((a, b) => a.start - b.start);
 						//Check if chapters has an intro
 						//if (!(chapters.find(c => c.type === 'intro') || chapters.find(c => c.type === 'recap'))) {
-						if (!chapters.find((c) => c.type === 'intro')) {
+						if (!validChapters.find((c) => c.type === 'intro')) {
 							compiledChapters.push(`CHAPTER${compiledChapters.length / 2 + 1}=00:00:00.00`, `CHAPTER${compiledChapters.length / 2 + 1}NAME=Episode`);
 						}
 
 						//Loop through all the chapters
-						for (const chapter of chapters) {
+						for (const chapter of validChapters) {
 							if (typeof chapter.start == 'undefined' || typeof chapter.end == 'undefined') continue;
 							//Generate timestamps
 							const startTime = new Date(0),
@@ -1679,7 +2010,7 @@ export default class Crunchy implements ServiceClass {
 							const startFormatted = startTime.toISOString().substring(11, 19) + '.00';
 							const endFormatted = endTime.toISOString().substring(11, 19) + '.00';
 							//Find the max start time from the chapters
-							const maxStart = Math.max(...chapters.map((obj) => obj.start).filter((start): start is number => start !== null && start !== undefined));
+							const maxStart = Math.max(...validChapters.map((obj) => obj.start).filter((start): start is number => start !== null && start !== undefined));
 							//We need the duration of the ep
 							let epDuration: number | undefined;
 							const epiMeta = await this.req.getData(
@@ -2105,17 +2436,17 @@ export default class Crunchy implements ServiceClass {
 									)
 								: vstreamPlaylists;
 
-						//Get name of CDNs/Servers
-						const vstreamServers = Object.keys(vstreamPlaylists);
-						const astreamServers = Object.keys(astreamPlaylists);
+						//Get name of CDNs/Servers (let so evs3 fallback can splice in new servers)
+						let vstreamServers = Object.keys(vstreamPlaylists);
+						let astreamServers = Object.keys(astreamPlaylists);
 
 						options.x = options.x > vstreamServers.length ? 1 : options.x;
 
-						const vselectedServer = vstreamServers[options.x - 1];
-						const vselectedList = vstreamPlaylists[vselectedServer];
+						let vselectedServer = vstreamServers[options.x - 1];
+						let vselectedList = vstreamPlaylists[vselectedServer];
 
-						const aselectedServer = astreamServers[options.x - 1];
-						const aselectedList = astreamPlaylists[aselectedServer];
+						let aselectedServer = astreamServers[options.x - 1];
+						let aselectedList = astreamPlaylists[aselectedServer];
 
 						//set Video Qualities
 						const videos = vselectedList.video.map((item) => {
@@ -2139,6 +2470,67 @@ export default class Crunchy implements ServiceClass {
 						audios.sort((a, b) => {
 							return a.bandwidth - b.bandwidth;
 						});
+
+						// Check if 1080p is not available - if so, try evs3 manifest for better quality
+						const maxQuality = videos.length > 0 ? videos[videos.length - 1].quality.height : 0;
+						if (maxQuality < 1080 && vcurStream.url.includes('/static/')) {
+							const evs3Result = await this.tryEvs3For1080p(
+								currentVersion ? currentVersion.guid : currentMediaId,
+								vcurStream.url,
+								maxQuality,
+								AuthHeaders,
+								pbData.meta.audio_locale as string,
+								options.x
+							);
+
+							if (evs3Result) {
+								// Update streams and metadata with evs3 data
+								videoStream = evs3Result.stream;
+								if (audioStream && audioStream.token !== evs3Result.stream.token) {
+									audioStream = evs3Result.stream;
+								}
+
+								// Update pbData.meta with evs3 subtitle/caption info
+								const evs3Captions = evs3Result.stream.captions || {};
+								const evs3Subtitles = evs3Result.stream.subtitles || {};
+								pbData.meta = {
+									...pbData.meta,
+									audio_locale: evs3Result.stream.audioLocale,
+									bifs: [evs3Result.stream.bifs],
+									captions: evs3Captions,
+									closed_captions: evs3Captions,
+									media_id: evs3Result.stream.assetId,
+									subtitles: evs3Subtitles,
+									versions: evs3Result.stream.versions
+								};
+
+								// Update stream URLs and playlists
+								vcurStream.url = evs3Result.stream.url;
+								acurStream.url = evs3Result.stream.url;
+								vstreamServers.splice(0, vstreamServers.length, ...evs3Result.servers);
+								astreamServers.splice(0, astreamServers.length, ...evs3Result.servers);
+
+								// Adjust server index if needed for evs3 servers
+								options.x = options.x > evs3Result.servers.length ? 1 : options.x;
+								const evs3SelectedServer = evs3Result.servers[options.x - 1] || evs3Result.servers[0];
+
+								vselectedServer = evs3SelectedServer;
+								vselectedList = evs3Result.playlists[evs3SelectedServer];
+								aselectedServer = evs3SelectedServer;
+								aselectedList = evs3Result.playlists[evs3SelectedServer];
+
+								videos.splice(0, videos.length, ...evs3Result.videos);
+								audios.splice(0, audios.length, ...evs3Result.audios);
+
+								// Log subtitle info
+								if (Object.keys(evs3Captions).length > 0) {
+									console.info('[INFO] Updated captions from evs3: %d CC tracks', Object.keys(evs3Captions).length);
+								}
+								if (Object.keys(evs3Subtitles).length > 0) {
+									console.info('[INFO] Updated subtitles from evs3: %d tracks', Object.keys(evs3Subtitles).length);
+								}
+							}
+						}
 
 						let chosenVideoQuality = options.q === 0 ? videos.length : options.q;
 						if (chosenVideoQuality > videos.length) {
@@ -2184,12 +2576,34 @@ export default class Crunchy implements ServiceClass {
 						);
 						console.info('Stream URL:', chosenVideoSegments.segments[0].uri.split(',.urlset')[0]);
 						// TODO check filename
-						fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-						const outFile = parseFileName(options.fileName + '.' + (mMeta.lang?.name || lang.name), variables, options.numbers, options.override).join(path.sep);
-						const tempFile = parseFileName(`temp-${currentVersion ? currentVersion.guid : currentMediaId}`, variables, options.numbers, options.override).join(
-							path.sep
-						);
-						const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.content, tempFile);
+						fileName = parseFileName(
+							options.fileName,
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
+						const outFile = parseFileName(
+							options.fileName + '.' + (mMeta.lang?.name || lang.name),
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
+						const tempFile = parseFileName(
+							`temp-${currentVersion ? currentVersion.guid : currentMediaId}`,
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
+						const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.tmp!, tempFile);
 
 						let encryptionKeysVideo;
 						let encryptionKeysAudio;
@@ -2308,7 +2722,7 @@ export default class Crunchy implements ServiceClass {
 							const mathParts = Math.ceil(totalParts / options.partsize);
 							const mathMsg = `(${mathParts}*${options.partsize})`;
 							console.info('Total parts in video stream:', totalParts, mathMsg);
-							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 							const dirName = path.dirname(tsFile);
 							if (!fs.existsSync(dirName)) {
 								fs.mkdirSync(dirName, { recursive: true });
@@ -2326,7 +2740,7 @@ export default class Crunchy implements ServiceClass {
 								override: options.force,
 								callback: options.callbackMaker
 									? options.callbackMaker({
-											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.content.length) : outFile}`,
+											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.tmp!.length) : outFile}`,
 											image: medias.image,
 											parent: {
 												title: medias.seasonTitle
@@ -2350,7 +2764,7 @@ export default class Crunchy implements ServiceClass {
 							const mathParts = Math.ceil(totalParts / options.partsize);
 							const mathMsg = `(${mathParts}*${options.partsize})`;
 							console.info('Total parts in audio stream:', totalParts, mathMsg);
-							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+							tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 							const dirName = path.dirname(tsFile);
 							if (!fs.existsSync(dirName)) {
 								fs.mkdirSync(dirName, { recursive: true });
@@ -2368,7 +2782,7 @@ export default class Crunchy implements ServiceClass {
 								override: options.force,
 								callback: options.callbackMaker
 									? options.callbackMaker({
-											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.content.length) : outFile}`,
+											fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.tmp!.length) : outFile}`,
 											image: medias.image,
 											parent: {
 												title: medias.seasonTitle
@@ -2516,7 +2930,7 @@ export default class Crunchy implements ServiceClass {
 						for (const pl of streamPlaylists.playlists ?? []) {
 							// set quality
 							const plResolution = pl.attributes.RESOLUTION;
-							const plResolutionText = `${plResolution?.width}x${plResolution?.height}`;
+							const plResolutionText = plResolution?.width && plResolution?.height ? `${plResolution.width}x${plResolution.height}` : 'unknown';
 							// set codecs
 							const plCodecs = pl.attributes.CODECS;
 							// parse uri
@@ -2608,8 +3022,24 @@ export default class Crunchy implements ServiceClass {
 							console.info(`Selected quality: ${Object.keys(plSelectedList).find((a) => plSelectedList[a] === selPlUrl)} @ ${plSelectedServer}`);
 							console.info('Stream URL:', selPlUrl);
 							// TODO check filename
-							fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-							const outFile = parseFileName(options.fileName + '.' + (mMeta.lang?.name || lang.name), variables, options.numbers, options.override).join(path.sep);
+							fileName = parseFileName(
+								options.fileName,
+								variables,
+								options.numbers,
+								options.override,
+								options.dubLang || [],
+								options.dlsubs || [],
+								options.ccTag || 'cc'
+							).join(path.sep);
+							const outFile = parseFileName(
+								options.fileName + '.' + (mMeta.lang?.name || lang.name),
+								variables,
+								options.numbers,
+								options.override,
+								options.dubLang || [],
+								options.dlsubs || [],
+								options.ccTag || 'cc'
+							).join(path.sep);
 							console.info(`Output filename: ${outFile}`);
 							const chunkPage = await this.req.getData(selPlUrl, {
 								headers: api.crunchyDefHeader
@@ -2648,7 +3078,7 @@ export default class Crunchy implements ServiceClass {
 								const mathParts = Math.ceil(totalParts / options.partsize);
 								const mathMsg = `(${mathParts}*${options.partsize})`;
 								console.info('Total parts in stream:', totalParts, mathMsg);
-								tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+								tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 								const dirName = path.dirname(tsFile);
 								if (!fs.existsSync(dirName)) {
 									fs.mkdirSync(dirName, { recursive: true });
@@ -2663,7 +3093,7 @@ export default class Crunchy implements ServiceClass {
 									override: options.force,
 									callback: options.callbackMaker
 										? options.callbackMaker({
-												fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.content.length) : outFile}`,
+												fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.tmp!.length) : outFile}`,
 												image: medias.image,
 												parent: {
 													title: medias.seasonTitle
@@ -2690,19 +3120,45 @@ export default class Crunchy implements ServiceClass {
 							dlFailed = true;
 						}
 					} else if (options.novids) {
-						fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
+						fileName = parseFileName(
+							options.fileName,
+							variables,
+							options.numbers,
+							options.override,
+							options.dubLang || [],
+							options.dlsubs || [],
+							options.ccTag || 'cc'
+						).join(path.sep);
 						console.info('Downloading skipped!');
 					}
 				}
 			} else if (options.novids && options.noaudio) {
-				fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
+				fileName = parseFileName(options.fileName, variables, options.numbers, options.override, options.dubLang || [], options.dlsubs || [], options.ccTag || 'cc').join(
+					path.sep
+				);
 			}
 
 			if (compiledChapters.length > 0) {
 				try {
-					fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
-					const outFile = parseFileName(options.fileName + '.' + mMeta.lang?.name, variables, options.numbers, options.override).join(path.sep);
-					tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+					fileName = parseFileName(
+						options.fileName,
+						variables,
+						options.numbers,
+						options.override,
+						options.dubLang || [],
+						options.dlsubs || [],
+						options.ccTag || 'cc'
+					).join(path.sep);
+					const outFile = parseFileName(
+						options.fileName + '.' + mMeta.lang?.name,
+						variables,
+						options.numbers,
+						options.override,
+						options.dubLang || [],
+						options.dlsubs || [],
+						options.ccTag || 'cc'
+					).join(path.sep);
+					tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 					const dirName = path.dirname(tsFile);
 					if (!fs.existsSync(dirName)) {
 						fs.mkdirSync(dirName, { recursive: true });
@@ -2768,6 +3224,7 @@ export default class Crunchy implements ServiceClass {
 					const subsArr = langsData.sortSubtitles<(typeof subsDataMapped)[0]>(subsDataMapped, 'language');
 					for (const subsIndex in subsArr) {
 						const subsItem = subsArr[subsIndex];
+						if (options.noCC && subsItem.isCC) continue;
 						const langItem = subsItem.locale;
 						const sxData: Partial<sxItem> = {};
 						sxData.language = langItem;
@@ -2777,7 +3234,7 @@ export default class Crunchy implements ServiceClass {
 						if (path.isAbsolute(sxData.file)) {
 							sxData.path = sxData.file;
 						} else {
-							sxData.path = path.join(this.cfg.dir.content, sxData.file);
+							sxData.path = path.join(this.cfg.dir.tmp!, sxData.file);
 						}
 						const dirName = path.dirname(sxData.path);
 						if (!fs.existsSync(dirName)) {
@@ -2999,7 +3456,7 @@ export default class Crunchy implements ServiceClass {
 											sBody = newLines.join('\n');
 										}
 
-										// Force outline thickness for ru-RU: if the 17th field (Outline) equals 2.6 → 2
+										// Force outline thickness for ru-RU: if the 17th field (Outline) equals 2.6 ? 2
 										if (langItem.cr_locale === 'ru-RU') {
 											sBody = sBody.replace(/^[ \t]*(Style:\s*[^,\n]*(?:,[^,\n]*){15}),\s*2(?:[.,]6(?:0+)?)?(\s*,)/gm, '$1,2$2');
 										}
@@ -3030,12 +3487,25 @@ export default class Crunchy implements ServiceClass {
 				console.info('Subtitles downloading skipped!');
 			}
 
-			await this.sleep(options.waittime);
+			if (options.waittime > 0) {
+				await this.sleep(options.waittime);
+			}
 		}
 		return {
 			error: dlFailed,
 			data: files,
-			fileName: fileName ? (path.isAbsolute(fileName) ? fileName : path.join(this.cfg.dir.content, fileName)) || './unknown' : './unknown'
+			fileName: resolveFinalMuxOutputBase({
+				fileName,
+				outputDirOption: options.outputDir,
+				cfgOutput: this.cfg.dir.output ?? this.cfg.dir.content!,
+				cfgContent: this.cfg.dir.content,
+				variables,
+				numbers: options.numbers,
+				override: options.override,
+				dubLang: options.dubLang || [],
+				dlsubs: options.dlsubs || [],
+				ccTag: options.ccTag || 'cc'
+			})
 		};
 	}
 
@@ -3110,7 +3580,8 @@ export default class Crunchy implements ServiceClass {
 				audio: options.defaultAudio,
 				sub: options.defaultSub
 			},
-			ccTag: options.ccTag
+			ccTag: options.ccTag,
+			subTrackOrder: options.subTrackOrder
 		});
 		const bin = Merger.checkMerger(this.cfg.bin, options.mp4, options.forceMuxer);
 		// collect fonts info
@@ -3231,7 +3702,7 @@ export default class Crunchy implements ServiceClass {
 			} - Season ${item.items[0].season_number} - ${item.items[0].title}
             \r\t- Versions: ${item.items
 				.map((a, index) => {
-					return `${a.is_premium_only ? '☆ ' : ''}${item.langs?.[index]?.name ?? 'Unknown'}`;
+					return `${a.is_premium_only ? '? ' : ''}${item.langs?.[index]?.name ?? 'Unknown'}`;
 				})
 				.join(', ')}
             \r\t- Subtitles: ${[...new Set(item.items.flatMap((a) => a.subtitle_locales ?? 'None'))].join(', ')}`);
@@ -3278,6 +3749,19 @@ export default class Crunchy implements ServiceClass {
 
 	public async downloadFromSeriesID(id: string, data: CrunchyMultiDownload): Promise<ResponseBase<CrunchyEpMeta[]>> {
 		const { data: episodes } = await this.listSeriesID(id, data);
+		// When series has no seasons (e.g. movie listing id), try movie_listings/{id}/movies
+		if (Object.keys(episodes).length === 0) {
+			const movieItems = await this.listMovieListingID(id, data);
+			if (movieItems.length > 0) {
+				console.info('');
+				console.info('-'.repeat(30));
+				console.info('');
+				for (const item of movieItems) {
+					console.info(`[Movie] - ${item.episodeTitle} [${item.data.map((a) => `? ${a.lang?.name || 'Unknown Language'}`).join(', ')}]`);
+				}
+				return { isOk: true, value: movieItems };
+			}
+		}
 		console.info('');
 		console.info('-'.repeat(30));
 		console.info('');
@@ -3287,12 +3771,107 @@ export default class Crunchy implements ServiceClass {
 			console.info(
 				`[S${item.season}E${item.episodeNumber}] - ${item.episodeTitle} [${item.data
 					.map((a) => {
-						return `✓ ${a.lang?.name || 'Unknown Language'}`;
+						return `? ${a.lang?.name || 'Unknown Language'}`;
 					})
 					.join(', ')}]`
 			);
 		}
 		return { isOk: true, value: Object.values(selected) };
+	}
+
+	/** Build queue items for a movie listing when series/seasons API returns empty (e.g. movie listing id). */
+	public async listMovieListingID(id: string, data: CrunchyMultiDownload): Promise<CrunchyEpMeta[]> {
+		if (!this.cmsToken.cms) return [];
+		const AuthHeaders = {
+			headers: {
+				Authorization: `Bearer ${this.token.access_token}`,
+				...api.crunchyDefHeader
+			}
+		};
+		const listingReq = await this.req.getData(`${api.content_cms}/movie_listings/${id}?force_locale=&preferred_audio_language=ja-JP&locale=${this.locale}`, AuthHeaders);
+		let listingTitle = 'Movie';
+		if (listingReq.ok && listingReq.res) {
+			try {
+				const listing = (await listingReq.res.json()) as { title?: string; data?: { title?: string } };
+				listingTitle = listing?.title ?? listing?.data?.title ?? listingTitle;
+			} catch {
+				// ignore
+			}
+		}
+		const moviesReq = await this.req.getData(`${api.content_cms}/movie_listings/${id}/movies?force_locale=&preferred_audio_language=ja-JP&locale=${this.locale}`, AuthHeaders);
+		if (!moviesReq.ok || !moviesReq.res) return [];
+		const moviesList = (await moviesReq.res.json()) as { total?: number; data?: CrunchyObject[] };
+		const movies = moviesList?.data ?? [];
+		if (movies.length === 0) return [];
+		const doEpsFilter = parseSelect(data.e as string);
+		const result: CrunchyEpMeta[] = [];
+		const defaultLang = data.dubLang?.length ? langsData.languages.find((l) => l.code === data.dubLang[0]) : undefined;
+		for (let i = 0; i < movies.length; i++) {
+			const epNum = (i + 1).toString();
+			if (data.e && !doEpsFilter.isSelected([epNum])) continue;
+			const item = movies[i] as CrunchyObject & { __links__?: { streams?: { href: string } }; streams_link?: string };
+			const playback = item?.__links__?.streams?.href ?? item?.streams_link;
+			if (!playback) continue;
+			const meta = item.movie_listing_metadata ?? item.movie_metadata;
+			const images = (item as CrunchyObject).images?.poster_tall ?? (item as CrunchyObject).images?.poster_wide;
+			const image = Array.isArray(images?.[0]) ? images[0][Math.floor(images[0].length / 2)]?.source : '/notFound.png';
+			result.push({
+				data: [
+					{
+						mediaId: 'M:' + item.id,
+						playback,
+						lang: defaultLang,
+						isSubbed: meta?.is_subbed ?? false,
+						isDubbed: meta?.is_dubbed ?? false,
+						durationMs: meta?.duration_ms ?? 0
+					}
+				],
+				seriesTitle: listingTitle,
+				seasonTitle: listingTitle,
+				episodeNumber: 'Movie',
+				episodeTitle: (item as CrunchyObject).title ?? 'Movie',
+				seasonID: id,
+				season: 0,
+				showID: id,
+				e: epNum,
+				image: typeof image === 'string' ? image : ((image as { source?: string })?.source ?? '/notFound.png')
+			});
+		}
+		return result;
+	}
+
+	/** Returns episode list shape for GUI when id is a movie listing (series list empty). */
+	public async listMovieListingEpisodes(id: string): Promise<Episode[]> {
+		if (!this.cmsToken.cms) return [];
+		const AuthHeaders = {
+			headers: {
+				Authorization: `Bearer ${this.token.access_token}`,
+				...api.crunchyDefHeader
+			}
+		};
+		const moviesReq = await this.req.getData(`${api.content_cms}/movie_listings/${id}/movies?force_locale=&preferred_audio_language=ja-JP&locale=${this.locale}`, AuthHeaders);
+		if (!moviesReq.ok || !moviesReq.res) return [];
+		const moviesList = (await moviesReq.res.json()) as { data?: CrunchyObject[] };
+		const movies = moviesList?.data ?? [];
+		return movies.map((item, i) => {
+			const meta = item.movie_listing_metadata ?? item.movie_metadata;
+			const images = item.images?.poster_tall ?? item.images?.poster_wide;
+			const img = Array.isArray(images?.[0]) ? images[0][Math.floor(images[0].length / 2)]?.source : '/notFound.png';
+			const seconds = Math.floor((meta?.duration_ms ?? 0) / 1000);
+			return {
+				e: (i + 1).toString(),
+				lang: ['eng'],
+				name: item.title ?? 'Movie',
+				season: '0',
+				seriesTitle: item.title ?? 'Movie',
+				seasonTitle: item.title ?? 'Movie',
+				episode: 'Movie',
+				id: item.id,
+				img: typeof img === 'string' ? img : ((img as { source?: string })?.source ?? '/notFound.png'),
+				description: (item as CrunchyObject & { description?: string }).description ?? '',
+				time: `${Math.floor(seconds / 60)}:${seconds % 60}`
+			};
+		});
 	}
 
 	public itemSelectMultiDub(
@@ -3377,7 +3956,7 @@ export default class Crunchy implements ServiceClass {
 					}
 				}
 
-				if (item.playback && ((but && !doEpsFilter.isSelected([epNum, item.id])) || all || (doEpsFilter.isSelected([epNum, item.id]) && !but))) {
+				if ((but && !doEpsFilter.isSelected([epNum, item.id])) || all || (doEpsFilter.isSelected([epNum, item.id]) && !but)) {
 					if (Object.prototype.hasOwnProperty.call(ret, key)) {
 						const epMe = ret[key];
 						epMe.data.push({

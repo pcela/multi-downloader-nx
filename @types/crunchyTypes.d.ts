@@ -15,11 +15,15 @@ export type CrunchyDownloadOptions = {
 	x: number;
 	q: number;
 	fileName: string;
+	/** Final mux directory template; expanded per download like fileName */
+	outputDir?: string;
 	numbers: number;
 	partsize: number;
 	callbackMaker?: (data: DownloadInfo) => HLSCallback;
 	timeout: number;
 	waittime: number;
+	/** Set when downloading multiple episodes (--all / GUI batch queue) */
+	all?: boolean;
 	fsRetryTime: number;
 	dlsubs: string[];
 	subdlfailed?: boolean;
@@ -35,6 +39,8 @@ export type CrunchyDownloadOptions = {
 	defaultSub: LanguageItem;
 	defaultAudio: LanguageItem;
 	ccTag: string;
+	noCC?: boolean;
+	subTrackOrder?: string;
 	dlVideoOnce: boolean;
 	skipmux?: boolean;
 	syncTiming: boolean;

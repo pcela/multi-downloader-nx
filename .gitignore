@@ -45,3 +45,8 @@ widevine/*
 !widevine/.gitkeep
 playready/*
 !playready/.gitkeep
+apk/
+jadx-*/
+jadx_output/
+final builds/
+package-lock.json

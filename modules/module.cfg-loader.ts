@@ -34,7 +34,8 @@ const tokenFile = {
 	cr: path.join(workingDir, 'config', 'cr_token'),
 	hd: path.join(workingDir, 'config', 'hd_token'),
 	hdNew: path.join(workingDir, 'config', 'hd_new_token'),
-	adn: path.join(workingDir, 'config', 'adn_token')
+	adn: path.join(workingDir, 'config', 'adn_token'),
+	oceanveil: path.join(workingDir, 'config', 'oceanveil_token')
 };
 
 export const ensureConfig = () => {
@@ -82,6 +83,11 @@ export type ConfigObject = {
 		trash: string;
 		fonts: string;
 		config: string;
+		archive?: string;
+		/** Temp dir for segments/intermediates; defaults to content if unset */
+		tmp?: string;
+		/** Final output dir for muxed files; defaults to content if unset */
+		output?: string;
 	};
 	bin: {
 		ffmpeg?: string;
@@ -104,6 +110,9 @@ const loadCfg = (): ConfigObject => {
 			trash: string;
 			fonts: string;
 			config: string;
+			archive?: string;
+			tmp?: string;
+			output?: string;
 		}>(dirCfgFile),
 		cli: loadYamlCfgFile<{
 			[key: string]: any;
@@ -129,6 +138,13 @@ const loadCfg = (): ConfigObject => {
 			defaultCfg.dir[key] = path.join(workingDir, defaultCfg.dir[key].replace(/^\${wdir}/, ''));
 		}
 	}
+
+	// Process archive path if it exists (optional field)
+	if (defaultCfg.dir.archive && typeof defaultCfg.dir.archive === 'string') {
+		if (!path.isAbsolute(defaultCfg.dir.archive)) {
+			defaultCfg.dir.archive = path.join(workingDir, defaultCfg.dir.archive.replace(/^\${wdir}/, ''));
+		}
+	}
 	if (!fs.existsSync(defaultCfg.dir.content)) {
 		try {
 			fs.mkdirSync(defaultCfg.dir.content, { recursive: true });
@@ -140,7 +156,22 @@ const loadCfg = (): ConfigObject => {
 	if (!fs.existsSync(defaultCfg.dir.trash)) {
 		defaultCfg.dir.trash = defaultCfg.dir.content;
 	}
-	// output
+	// Optional tmp/output dirs (default to content)
+	defaultCfg.dir.tmp = defaultCfg.dir.tmp ?? defaultCfg.dir.content;
+	defaultCfg.dir.output = defaultCfg.dir.output ?? defaultCfg.dir.content;
+	if (!path.isAbsolute(defaultCfg.dir.tmp)) {
+		defaultCfg.dir.tmp = path.join(workingDir, defaultCfg.dir.tmp.replace(/^\${wdir}/, ''));
+	}
+	if (!path.isAbsolute(defaultCfg.dir.output)) {
+		defaultCfg.dir.output = path.join(workingDir, defaultCfg.dir.output.replace(/^\${wdir}/, ''));
+	}
+	for (const d of [defaultCfg.dir.tmp, defaultCfg.dir.output]) {
+		if (d && !fs.existsSync(d)) {
+			try {
+				fs.mkdirSync(d, { recursive: true });
+			} catch (_) {}
+		}
+	}
 	return defaultCfg;
 };
 
@@ -324,6 +355,24 @@ const saveNewHDToken = (data: Record<string, unknown>) => {
 	}
 };
 
+const loadOceanveilToken = () => {
+	let token = loadYamlCfgFile(tokenFile.oceanveil, true);
+	if (typeof token !== 'object' || token === null || Array.isArray(token)) {
+		token = {};
+	}
+	return token;
+};
+
+const saveOceanveilToken = (data: Record<string, unknown>) => {
+	const cfgFolder = path.dirname(tokenFile.oceanveil);
+	try {
+		fs.mkdirSync(cfgFolder, { recursive: true });
+		fs.writeFileSync(`${tokenFile.oceanveil}.yml`, yaml.stringify(data));
+	} catch (e) {
+		console.error("Can't save OceanVeil token file to disk!");
+	}
+};
+
 const cfgDir = path.join(workingDir, 'config');
 
 const getState = (): GuiState => {
@@ -369,6 +418,8 @@ export {
 	loadHDToken,
 	saveNewHDToken,
 	loadNewHDToken,
+	saveOceanveilToken,
+	loadOceanveilToken,
 	saveHDProfile,
 	loadHDProfile,
 	getState,

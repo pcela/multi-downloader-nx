@@ -20,19 +20,43 @@ const EpisodeListing: React.FC = () => {
 		return s;
 	}, [store.episodeListing]);
 
+	// Use episode ID for selection only on Hidive when same episode number appears in different seasons (e.g. S1E6 vs S2E6)
+	const useIdForSelection = React.useMemo(() => {
+		const epNumbers = store.episodeListing.map((ep) => ep.e);
+		return epNumbers.length > 0 && epNumbers.length !== new Set(epNumbers).size;
+	}, [store.episodeListing]);
+	const multiSeason = seasons.length > 1 || useIdForSelection;
+	const useIdForKey = multiSeason && store.service === 'hidive';
 	const [selected, setSelected] = React.useState<string[]>([]);
 
 	React.useEffect(() => {
-		setSelected(parseSelect(store.downloadOptions.e));
-	}, [store.episodeListing]);
+		const parsed = parseEpisodes(store.downloadOptions.e);
+		if (parsed.length === 0) {
+			setSelected([]);
+			return;
+		}
+		const allEps = store.episodeListing;
+		const matched = allEps.filter((ep) => {
+			if (parsed.includes(ep.e) || parsed.includes(ep.id)) return true;
+			if (
+				multiSeason &&
+				parsed.some((t) => {
+					const m = t.match(/^S(\d+)E(\d+)$/i);
+					return m && String(ep.season) === String(Number(m[1])) && String(ep.e) === String(Number(m[2]));
+				})
+			)
+				return true;
+			return false;
+		});
+		setSelected(matched.map((ep) => (useIdForKey ? ep.id : ep.e)));
+	}, [store.episodeListing, store.downloadOptions.e, multiSeason, useIdForKey]);
 
 	const close = () => {
-		const mergedEpisodes = [...parseEpisodes(store.downloadOptions.e), ...selected];
 		dispatch({
 			type: 'downloadOptions',
 			payload: {
 				...store.downloadOptions,
-				e: serializeEpisodes(mergedEpisodes)
+				e: serializeEpisodes(selected)
 			}
 		});
 		dispatch({ type: 'episodeListing', payload: [] });
@@ -40,6 +64,22 @@ const EpisodeListing: React.FC = () => {
 
 	const getEpisodesForSeason = (season: string | 'all') => {
 		return store.episodeListing.filter((a) => (season === 'all' ? true : a.season === season));
+	};
+
+	const getSelectKey = (item: (typeof store.episodeListing)[0]) => (useIdForKey ? item.id : item.e);
+	const isItemSelected = (item: (typeof store.episodeListing)[0]) => selected.includes(getSelectKey(item));
+	const toggleSelect = (item: (typeof store.episodeListing)[0]) => {
+		const key = getSelectKey(item);
+		setSelected((prev) => (prev.includes(key) ? prev.filter((a) => a !== key) : [...prev, key]));
+	};
+	const selectAllForSeason = () => {
+		const eps = getEpisodesForSeason(season);
+		const keys = new Set(eps.map((ep) => getSelectKey(ep)));
+		setSelected((prev) => {
+			const allSelected = eps.every((ep) => prev.includes(getSelectKey(ep)));
+			if (allSelected) return prev.filter((k) => !keys.has(k));
+			return [...prev.filter((k) => !keys.has(k)), ...Array.from(keys)];
+		});
 	};
 
 	return (
@@ -51,7 +91,7 @@ const EpisodeListing: React.FC = () => {
 				<FormControl sx={{ mr: 2, mt: 2 }}>
 					<InputLabel id="seasonSelectLabel">Season</InputLabel>
 					<Select labelId="seasonSelectLabel" label="Season" value={season} onChange={(e) => setSeason(e.target.value)}>
-						<MenuItem value="all">Show all Epsiodes</MenuItem>
+						<MenuItem value="all">Show all Episodes</MenuItem>
 						{seasons.map((a, index) => {
 							return (
 								<MenuItem value={a} key={`MenuItem_SeasonSelect_${index}`}>
@@ -65,21 +105,15 @@ const EpisodeListing: React.FC = () => {
 			<List>
 				<ListItem sx={{ display: 'grid', gridTemplateColumns: '25px 1fr 5fr' }}>
 					<Checkbox
-						indeterminate={store.episodeListing.some((a) => selected.includes(a.e)) && !store.episodeListing.every((a) => selected.includes(a.e))}
-						checked={store.episodeListing.every((a) => selected.includes(a.e))}
-						onChange={() => {
-							if (selected.length > 0) {
-								setSelected([]);
-							} else {
-								setSelected(getEpisodesForSeason(season).map((a) => a.e));
-							}
-						}}
+						indeterminate={getEpisodesForSeason(season).some((a) => isItemSelected(a)) && !getEpisodesForSeason(season).every((a) => isItemSelected(a))}
+						checked={getEpisodesForSeason(season).length > 0 && getEpisodesForSeason(season).every((a) => isItemSelected(a))}
+						onChange={selectAllForSeason}
 					/>
 				</ListItem>
 				{getEpisodesForSeason(season).map((item, index, { length }) => {
 					const e = isNaN(parseInt(item.e)) ? item.e : parseInt(item.e);
-					const idStr = `S${item.season}E${e}`;
-					const isSelected = selected.includes(e.toString());
+					const idStr = useIdForKey ? `S${item.season}E${e} (${item.id})` : `S${item.season}E${e}`;
+					const isSelected = isItemSelected(item);
 					const imageRef = React.createRef<HTMLImageElement>();
 					const summaryRef = React.createRef<HTMLParagraphElement>();
 					return (
@@ -91,15 +125,7 @@ const EpisodeListing: React.FC = () => {
 									display: 'grid',
 									gridTemplateColumns: '25px 50px 1fr 5fr'
 								}}
-								onClick={() => {
-									let arr: string[] = [];
-									if (isSelected) {
-										arr = [...selected.filter((a) => a !== e.toString())];
-									} else {
-										arr = [...selected, e.toString()];
-									}
-									setSelected(arr.filter((a) => a.length > 0));
-								}}
+								onClick={() => toggleSelect(item)}
 							>
 								{isSelected ? <CheckBox /> : <CheckBoxOutlineBlank />}
 								<Typography color="text.primary" sx={{ textAlign: 'center' }}>

@@ -16,12 +16,14 @@ export type DownloadOptions = {
 	hslang?: string;
 	simul: boolean;
 	noaudio: boolean;
+	/** OceanVeil: SFW catalog (for resolve/list) */
+	sfw?: boolean;
 };
 
 export type StoreState = {
 	episodeListing: Episode[];
 	downloadOptions: DownloadOptions;
-	service: 'crunchy' | 'hidive' | 'adn' | undefined;
+	service: 'crunchy' | 'hidive' | 'adn' | 'oceanveil' | undefined;
 	version: string;
 };
 

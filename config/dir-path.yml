@@ -1,2 +1,10 @@
+# Directory paths (relative to app root unless absolute).
+# Only keys listed here have an effect when you change them; omit the rest for defaults.
+
 content: ./videos/
 fonts: ./fonts/
+
+# Optional:
+# archive: ./config/archive.json  # Default download-history JSON (--archive overrides)
+# tmp: ./videos/                   # Default temp/mux workspace (--tmpDir overrides)
+# output: ./videos/                # Default final mux base without --outputDir (CLI templates use content as base)

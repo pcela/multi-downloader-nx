@@ -17,12 +17,13 @@ import * as yargs from './modules/module.app-args';
 import Merger, { Font, MergerInput, SubtitleInput } from './modules/module.merger';
 import vtt2ass from './modules/module.vtt2ass';
 import Helper from './modules/module.helper';
+import RawOutputManager from './modules/module.raw-output';
 
 // load req
 import { api } from './modules/module.api-urls';
 import * as reqModule from './modules/module.fetch';
 import { DownloadedMedia } from './@types/hidiveTypes';
-import parseFileName, { Variable } from './modules/module.filename';
+import parseFileName, { Variable, resolveFinalMuxOutputBase } from './modules/module.filename';
 import { downloaded } from './modules/module.downloadArchive';
 import parseSelect from './modules/module.parseSelect';
 import { AvailableFilenameVars } from './modules/module.args';
@@ -64,6 +65,10 @@ export default class Hidive implements ServiceClass {
 
 		// load binaries
 		this.cfg.bin = await yamlCfg.loadBinCfg();
+		if (argv.tmpDir) {
+			this.cfg.dir.tmp = path.resolve(argv.tmpDir);
+			if (!fs.existsSync(this.cfg.dir.tmp)) fs.mkdirSync(this.cfg.dir.tmp, { recursive: true });
+		}
 		if (argv.allDubs) {
 			argv.dubLang = langsData.dubLanguageCodes;
 		}
@@ -74,9 +79,36 @@ export default class Hidive implements ServiceClass {
 				password: argv.password ?? (await Helper.question('[Q] PASSWORD: '))
 			});
 		} else if (argv.search && argv.search.length > 2) {
-			await this.doSearch({ ...argv, search: argv.search as string });
+			// Handle raw output for search
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				const searchResults = await this.doSearch({ ...argv, search: argv.search as string });
+				await RawOutputManager.saveRawOutput({
+					service: 'hidive',
+					data: searchResults,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'search',
+					description: `Search results for "${argv.search}"`
+				});
+				return;
+			} else {
+				// Normal search - doSearch() displays results internally
+				await this.doSearch({ ...argv, search: argv.search as string });
+			}
 		} else if (argv.s && !isNaN(parseInt(argv.s, 10)) && parseInt(argv.s, 10) > 0) {
 			const selected = await this.selectSeason(parseInt(argv.s), argv.e, argv.but, argv.all);
+
+			// Handle raw output for season
+			if (RawOutputManager.shouldOutputRaw(argv)) {
+				await RawOutputManager.saveRawOutput({
+					service: 'hidive',
+					data: selected,
+					outputPath: RawOutputManager.getOutputPath(argv),
+					dataType: 'series',
+					description: `Season ${argv.s} data with episodes`
+				});
+				return true;
+			}
+
 			if (selected.isOk && selected.showData) {
 				for (const select of selected.value) {
 					//download episode
@@ -99,7 +131,7 @@ export default class Hidive implements ServiceClass {
 				}
 			}
 		} else if (argv.new) {
-			console.error('--new is not yet implemented in the new API');
+			await this.getNewlyAdded(argv.page, argv.raw, argv.rawoutput);
 		} else if (argv.e) {
 			if (!(await this.downloadSingleEpisode(parseInt(argv.e), { ...argv }))) {
 				console.error(`Unable to download selected episode ${argv.e}`);
@@ -361,6 +393,246 @@ export default class Hidive implements ServiceClass {
 					};
 				})
 		};
+	}
+
+	public async getNewlyAdded(page = 1, raw = false, rawoutput?: string) {
+		if (!(await this.doAnonymousAuth())) {
+			console.error('Authentication failed!');
+			return;
+		}
+
+		// Past 30 days only (no future episodes)
+		const now = new Date();
+		const from = new Date(now);
+		from.setDate(from.getDate() - 30);
+		const to = new Date(now);
+		to.setHours(23, 59, 59, 999); // End of today
+
+		const fromDate = from.toISOString().replace(/\.\d{3}Z$/, '');
+		const toDate = to.toISOString().replace(/\.\d{3}Z$/, '');
+
+		// Detect user's timezone
+		const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		const timezone = userTimezone || 'UTC';
+
+		let allElements: any[] = [];
+		let lastSeen: string | undefined;
+		let hasMore = true;
+
+		// Fetch all pages in the date range
+		while (hasMore) {
+			const query = lastSeen
+				? new URLSearchParams({ timezone, groupsPerPage: '7', itemsPerGroup: '7', lastSeen })
+				: new URLSearchParams({
+						timezone,
+						groupsPerPage: '7',
+						itemsPerGroup: '7',
+						from: fromDate,
+						to: toDate
+					});
+
+			const scheduleReq = await this.apiReq(`/v1/view/schedule?${query}`, '', 'auth', 'GET');
+			if (!scheduleReq.ok || !scheduleReq.res) {
+				console.error('Failed to get HIDIVE schedule!');
+				return;
+			}
+			const pageData = JSON.parse(await scheduleReq.res.text());
+
+			// Collect elements from this page
+			const elements = pageData?.elements ?? [];
+			allElements.push(...elements);
+
+			// Check for pagination
+			const groupList = elements.find((el: Record<string, any>) => el.$type === 'groupList');
+			lastSeen = groupList?.attributes?.actions?.next?.data?.lastSeen;
+			if (!lastSeen) {
+				hasMore = false;
+			}
+		}
+
+		// Combine all pages into single response structure
+		const scheduleData = { elements: allElements };
+
+		if (!scheduleData) return;
+
+		if (raw) {
+			console.info(JSON.stringify(scheduleData, null, 2));
+			if (rawoutput) {
+				try {
+					fs.writeFileSync(rawoutput, JSON.stringify(scheduleData), { encoding: 'utf-8' });
+					console.info(`Raw output saved to ${rawoutput}`);
+				} catch (e) {
+					console.error(`Failed to save raw output to ${rawoutput}:`, e);
+				}
+			}
+			return;
+		}
+
+		// Find all groupList elements from all pages and merge their groups
+		const allGroups: any[] = [];
+		for (const element of scheduleData.elements) {
+			if (element.$type === 'groupList' && element.attributes?.groups) {
+				allGroups.push(...element.attributes.groups);
+			}
+		}
+
+		// Create a merged groupList with all groups from all pages
+		const mergedGroupList = {
+			$type: 'groupList',
+			attributes: {
+				groups: allGroups
+			}
+		};
+		console.info('HIDIVE Schedule:');
+		for (const group of mergedGroupList?.attributes?.groups ?? []) {
+			const groupDate: string = group.id ?? '';
+			if (groupDate) console.info(`\n  [${groupDate}]`);
+
+			for (const card of group?.attributes?.cards ?? []) {
+				const contentElems: Record<string, any>[] = card?.attributes?.content?.[0]?.attributes?.elements ?? [];
+				const airTime: string = contentElems.find((e) => e.attributes?.format === 'date-time')?.attributes?.text ?? '';
+				const rawId: string = card?.attributes?.action?.data?.id ?? '';
+				const epId = rawId.replace(/^VOD#/, '');
+
+				// Extract audio language for sub/dub detection
+				let audioLanguage = '';
+				let subDubType = '';
+				// Look for tagList elements that contain audio language info
+				const tagListElements = contentElems.filter((e) => e.$type === 'tagList');
+				for (const tagList of tagListElements) {
+					const tags = tagList?.attributes?.tags ?? [];
+					for (const tag of tags) {
+						if (tag.$type === 'tag' && tag.attributes?.icon?.attributes?.icon === 'AUDIO') {
+							audioLanguage = tag.attributes?.text?.attributes?.text ?? '';
+							subDubType = audioLanguage === 'ja-JP' ? 'SIMULCAST' : audioLanguage === 'en-US' ? 'DUB' : '';
+							break;
+						}
+					}
+					if (subDubType) break;
+				}
+
+				// Smart availability logic - compare display vs computed dates (Python CLI logic)
+				const actionData = card?.attributes?.action?.data ?? {};
+				const computedReleases = actionData?.computedReleases ?? [];
+				let isAvailable = false;
+				let displayDate: string | undefined;
+				let computedDate: string | undefined;
+				let displayDateStr: string | undefined;
+
+				// Extract display date from content
+				const dateElement = contentElems.find((e) => e.attributes?.format === 'date-time');
+				if (dateElement) {
+					displayDateStr = dateElement.attributes?.text ?? '';
+					if (displayDateStr && displayDateStr.includes('T')) {
+						displayDate = displayDateStr.split('T')[0];
+					}
+				}
+
+				// Extract computed date from computedReleases
+				if (computedReleases.length > 0) {
+					const scheduledAt = computedReleases[0].scheduledAt;
+					if (scheduledAt) {
+						// Handle both ISO format (2026-05-26T13:30:00Z) and US format (6/10/2026 5:00:00 PM)
+						if (scheduledAt.includes('T')) {
+							computedDate = scheduledAt.split('T')[0];
+						} else {
+							// Parse US format and convert to ISO
+							const usDateMatch = scheduledAt.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+							if (usDateMatch) {
+								const [, month, day, year] = usDateMatch;
+								computedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+							}
+						}
+					}
+				}
+
+				// Determine availability using the same logic as Python CLI
+				const today = now.toISOString().split('T')[0];
+
+				if (displayDate && computedDate) {
+					// Calculate days difference from today for both dates
+					const displayDt = new Date(displayDate);
+					const computedDt = new Date(computedDate);
+					const todayDt = new Date(today);
+
+					const displayDiff = Math.abs((displayDt.getTime() - todayDt.getTime()) / (1000 * 60 * 60 * 24));
+					const computedDiff = Math.abs((computedDt.getTime() - todayDt.getTime()) / (1000 * 60 * 60 * 24));
+
+					// Use the date closer to today
+					let chosenDate: string;
+					let chosenSource: string;
+
+					if (displayDiff <= computedDiff) {
+						chosenDate = displayDate;
+						chosenSource = 'display';
+					} else {
+						chosenDate = computedDate;
+						chosenSource = 'computed';
+					}
+
+					// For past dates, be more lenient - if display date is in the past, consider it available
+					if (displayDate && displayDt < todayDt) {
+						isAvailable = true;
+					} else if (chosenSource === 'display' && displayDateStr) {
+						// Parse display datetime with user's timezone
+						const displayDateTime = new Date(displayDateStr);
+						isAvailable = displayDateTime <= now;
+					} else if (chosenSource === 'computed' && computedReleases[0].scheduledAt) {
+						// Parse computed datetime with UTC
+						const computedDateTime = new Date(computedReleases[0].scheduledAt);
+						isAvailable = computedDateTime <= now;
+					} else {
+						// Fallback to date-only comparison
+						const chosenDt = new Date(chosenDate);
+						isAvailable = chosenDt <= todayDt;
+					}
+				} else {
+					// Fallback to original logic if we don't have both dates
+					isAvailable = computedReleases.length === 0;
+				}
+
+				// Skip if not available (past episodes only)
+				if (!isAvailable) continue;
+
+				let displayLine: string;
+				let seriesTitle = '';
+				let seasonNum: number | undefined;
+				let epNum: number | undefined;
+				let episodeTitle = '';
+
+				// Try to extract basic info from content first
+				const titleText = contentElems[1]?.attributes?.text ?? actionData?.title ?? '';
+				const episodeMatch = titleText.match(/^E(\d+)\s*-\s*(.+)/);
+				if (episodeMatch) {
+					epNum = parseInt(episodeMatch[1]);
+					episodeTitle = episodeMatch[2];
+				}
+
+				// Only fetch VOD details if essential info is missing
+				const needsVodDetails = !seriesTitle || !seasonNum || !episodeTitle;
+				if (epId && needsVodDetails) {
+					const vodReq = await this.apiReq(`/v4/vod/${epId}`, '', 'auth', 'GET');
+					if (vodReq.ok && vodReq.res) {
+						const vodData = JSON.parse(await vodReq.res.text());
+						const epInfo = vodData?.episodeInformation ?? {};
+						seriesTitle = seriesTitle || (epInfo?.seriesInformation?.title ?? '');
+						seasonNum = seasonNum || epInfo?.seasonNumber;
+						epNum = epNum || epInfo?.episodeNumber;
+						const rawTitle = vodData?.title ?? titleText;
+						episodeTitle = episodeTitle || rawTitle.replace(/^E\d+\s*-\s*/, '').trim() || rawTitle;
+					}
+				}
+
+				// Build display line
+				const epLabel = seasonNum != null && epNum != null ? `S${seasonNum}E${epNum}` : '';
+				const parts = [seriesTitle, epLabel, episodeTitle].filter(Boolean);
+				const typeSuffix = subDubType ? ` [${subDubType}]` : '';
+				displayLine = `    [E.${epId}] ${parts.join(' - ')}${typeSuffix}`;
+
+				console.info(displayLine);
+				if (airTime) console.info(`      - Air time: ${airTime}`);
+			}
+		}
 	}
 
 	public async getSeries(id: number) {
@@ -631,7 +903,8 @@ export default class Hidive implements ServiceClass {
 		const episodeData = JSON.parse(await episodeDataReq.res.text()) as NewHidiveEpisode;
 
 		if (!episodeData.playerUrlCallback) {
-			console.error('Failed to download episode: You do not have access to this');
+			const accessHint = episodeData.accessLevel ? ` (accessLevel: ${episodeData.accessLevel})` : '';
+			console.error(`Failed to download episode [E.${selectedEpisode.id}]: You do not have access to this${accessHint}`);
 			return { isOk: false, reason: new Error('You do not have access to this') };
 		}
 
@@ -700,7 +973,8 @@ export default class Hidive implements ServiceClass {
 		}
 
 		if (!episodeData.playerUrlCallback) {
-			console.error('Failed to download episode: You do not have access to this');
+			const accessHint = episodeData.accessLevel ? ` (accessLevel: ${episodeData.accessLevel})` : '';
+			console.error(`Failed to download episode [E.${id}]: You do not have access to this${accessHint}`);
 			return { isOk: false, reason: new Error('You do not have access to this') };
 		}
 
@@ -900,7 +1174,9 @@ export default class Hidive implements ServiceClass {
 			return undefined;
 		}
 
-		const fileName = parseFileName(options.fileName, variables, options.numbers, options.override).join(path.sep);
+		const fileName = parseFileName(options.fileName, variables, options.numbers, options.override, options.dubLang || [], options.dlsubs || [], options.ccTag || 'cc').join(
+			path.sep
+		);
 
 		console.info(`Selected quality: \n\tVideo: ${chosenVideoSegments.resolutionText}\n\tAudio: ${chosenAudios[0].resolutionText}\n\tServer: ${selectedServer}`);
 		console.info(`Selected (Available) Audio Languages: ${chosenAudios.map((a) => a.language.name).join(', ')}`);
@@ -926,9 +1202,17 @@ export default class Hidive implements ServiceClass {
 			const mathParts = Math.ceil(totalParts / options.partsize);
 			const mathMsg = `(${mathParts}*${options.partsize})`;
 			console.info('Total parts in video stream:', totalParts, mathMsg);
-			const tsFile = path.isAbsolute(fileName) ? fileName : path.join(this.cfg.dir.content, fileName);
-			const tempFile = parseFileName(`temp-${selectedEpisode.id}`, variables, options.numbers, options.override).join(path.sep);
-			const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.content, tempFile);
+			const tsFile = path.isAbsolute(fileName) ? fileName : path.join(this.cfg.dir.tmp!, fileName);
+			const tempFile = parseFileName(
+				`temp-${selectedEpisode.id}`,
+				variables,
+				options.numbers,
+				options.override,
+				options.dubLang || [],
+				options.dlsubs || [],
+				options.ccTag || 'cc'
+			).join(path.sep);
+			const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.tmp!, tempFile);
 			const dirName = path.dirname(tsFile);
 			if (!fs.existsSync(dirName)) {
 				fs.mkdirSync(dirName, { recursive: true });
@@ -946,7 +1230,7 @@ export default class Hidive implements ServiceClass {
 				override: options.force,
 				callback: options.callbackMaker
 					? options.callbackMaker({
-							fileName: `${path.isAbsolute(fileName) ? fileName.slice(this.cfg.dir.content.length) : fileName}`,
+							fileName: `${path.isAbsolute(fileName) ? fileName.slice(this.cfg.dir.tmp!.length) : fileName}`,
 							image: selectedEpisode.thumbnailUrl,
 							parent: {
 								title: selectedEpisode.seriesTitle
@@ -1020,10 +1304,26 @@ export default class Hidive implements ServiceClass {
 				const mathParts = Math.ceil(totalParts / options.partsize);
 				const mathMsg = `(${mathParts}*${options.partsize})`;
 				console.info('Total parts in audio stream:', totalParts, mathMsg);
-				const tempFile = parseFileName(`temp-${selectedEpisode.id}.${chosenAudioSegments.language.name}`, variables, options.numbers, options.override).join(path.sep);
-				const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.content, tempFile);
-				const outFile = parseFileName(options.fileName + '.' + chosenAudioSegments.language.name, variables, options.numbers, options.override).join(path.sep);
-				const tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.content, outFile);
+				const tempFile = parseFileName(
+					`temp-${selectedEpisode.id}.${chosenAudioSegments.language.name}`,
+					variables,
+					options.numbers,
+					options.override,
+					options.dubLang || [],
+					options.dlsubs || [],
+					options.ccTag || 'cc'
+				).join(path.sep);
+				const tempTsFile = path.isAbsolute(tempFile as string) ? tempFile : path.join(this.cfg.dir.tmp!, tempFile);
+				const outFile = parseFileName(
+					options.fileName + '.' + chosenAudioSegments.language.name,
+					variables,
+					options.numbers,
+					options.override,
+					options.dubLang || [],
+					options.dlsubs || [],
+					options.ccTag || 'cc'
+				).join(path.sep);
+				const tsFile = path.isAbsolute(outFile as string) ? outFile : path.join(this.cfg.dir.tmp!, outFile);
 				const dirName = path.dirname(tsFile);
 				if (!fs.existsSync(dirName)) {
 					fs.mkdirSync(dirName, { recursive: true });
@@ -1041,7 +1341,7 @@ export default class Hidive implements ServiceClass {
 					override: options.force,
 					callback: options.callbackMaker
 						? options.callbackMaker({
-								fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.content.length) : outFile}`,
+								fileName: `${path.isAbsolute(outFile) ? outFile.slice(this.cfg.dir.tmp!.length) : outFile}`,
 								image: selectedEpisode.thumbnailUrl,
 								parent: {
 									title: selectedEpisode.seriesTitle
@@ -1130,7 +1430,7 @@ export default class Hidive implements ServiceClass {
 					if (path.isAbsolute(sxData.file)) {
 						sxData.path = sxData.file;
 					} else {
-						sxData.path = path.join(this.cfg.dir.content, sxData.file);
+						sxData.path = path.join(this.cfg.dir.tmp!, sxData.file);
 					}
 					const dirName = path.dirname(sxData.path);
 					if (!fs.existsSync(dirName)) {
@@ -1178,7 +1478,18 @@ export default class Hidive implements ServiceClass {
 		return {
 			error: dlFailed,
 			data: files,
-			fileName: fileName ? (path.isAbsolute(fileName) ? fileName : path.join(this.cfg.dir.content, fileName)) || './unknown' : './unknown'
+			fileName: resolveFinalMuxOutputBase({
+				fileName,
+				outputDirOption: options.outputDir as string | undefined,
+				cfgOutput: this.cfg.dir.output ?? this.cfg.dir.content!,
+				cfgContent: this.cfg.dir.content,
+				variables,
+				numbers: options.numbers,
+				override: options.override,
+				dubLang: options.dubLang || [],
+				dlsubs: options.dlsubs || [],
+				ccTag: options.ccTag || 'cc'
+			})
 		};
 	}
 
@@ -1255,7 +1566,8 @@ export default class Hidive implements ServiceClass {
 				audio: options.defaultAudio,
 				sub: options.defaultSub
 			},
-			ccTag: options.ccTag
+			ccTag: options.ccTag,
+			subTrackOrder: options.subTrackOrder
 		});
 		const bin = Merger.checkMerger(this.cfg.bin, options.mp4, options.forceMuxer);
 		// collect fonts info

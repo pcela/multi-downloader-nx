@@ -4,7 +4,7 @@ If you find any bugs in this documentation or in the program itself please repor
 
 ## Legal Warning
 
-This application is not endorsed by or affiliated with *Crunchyroll*, *Hidive* or *AnimationDigitalNetwork*.
+This application is not endorsed by or affiliated with *Crunchyroll*, *Hidive*, *AnimationDigitalNetwork* or *OceanVeil*.
 This application enables you to download videos for offline viewing which may be forbidden by law in your country.
 The usage of this application may also cause a violation of the *Terms of Service* between you and the stream provider.
 This tool is not responsible for your actions; please make an informed decision before using this application.
@@ -13,6 +13,12 @@ This tool is not responsible for your actions; please make an informed decision 
 ### Legend
  - `${someText}` shows that you should replace this text with your own
     - e.g. `--username ${someText}` -> `--username Izuco`
+ - **Service** shows which provider(s) the option applies to:
+    - *All* = every service (Crunchyroll, Hidive, AnimationDigitalNetwork, OceanVeil)
+    - A single name (e.g. *Crunchyroll*, *OceanVeil*) = that service only
+    - Several names = those services only
+ - **OceanVeil** search filters: use `--search "<term>" --tags ...` / `--tag-ids ...` (tags are AND-ed by API). Example: `--search "bl" --tags yaoi` or `--search "isekai" --tag-ids 59 22`.
+- **OceanVeil** selectors: use `--srz <titleId>` and `-e <episodeNumberOrId>`; `-s` is optional and only season `1` is supported when provided (e.g. `--srz 337 -e 4` or `--srz 337 -s 1 -e 2100`).
 
 ### Authentication
 #### `--auth`
@@ -77,7 +83,7 @@ Search only for type of anime listings (e.g. episodes, series)
 #### `--page`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
-| Crunchyroll, Hidive | `--page ${page}` | `number` | `No`| `-p` | `NaN` |
+| Crunchyroll, Hidive, OceanVeil | `--page ${page}` | `number` | `No`| `-p` | `NaN` |
 
 The output is organized in pages. Use this command to output the items for the given page
 #### `--locale`
@@ -89,9 +95,63 @@ Set the local that will be used for the API.
 #### `--new`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
-| Crunchyroll, Hidive | `--new ` | `boolean` | `No`| `NaN` | `NaN` |
+| Crunchyroll, Hidive, OceanVeil | `--new ` | `boolean` | `No`| `NaN` | `NaN` |
 
-Get last updated series list
+Get newly added content (use --search-type episode for episode feed with air dates)
+#### `--sfw`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--sfw ` | `boolean` | `No`| `NaN` | `NaN` |
+
+When set, use the SFW catalog for search and new episodes (is_mature=false).
+#### `--genre`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--genre ${genreName}` | `string` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Genre name to filter search (e.g. --genre "Young Adult"). Resolved to ID via API when /genres is available.
+If no genre is resolved, search proceeds without a genre filter. Prefer --genre-id when you already know the numeric ID.
+#### `--genre-id`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--genre-id ${genreId}` | `number` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Use when you have the ID; otherwise use --genre <name>. Use --list-genres to see id→name.
+#### `--tags`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--tags ${tagNames}` | `array` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Tag names to filter search (e.g. --tags glasses harem).
+Names are resolved to IDs via API. Multiple tags are AND-ed by OceanVeil API (must match all selected tags).
+Use together with --search "<term>" (e.g. --search "bl" --tags yaoi).
+#### `--tag-ids`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--tag-ids ${tagIds}` | `array` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Use when you already know IDs; otherwise use --tags <name1> <name2>.
+Multiple IDs are AND-ed by OceanVeil API (must match all selected tags).
+Example: --search "isekai" --tag-ids 59 22
+#### `--list-tags`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--list-tags ` | `boolean` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Fetches and prints tag ID → name so you can use --tag-ids. Use --sfw for SFW catalog tags.
+#### `--list-genres`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--list-genres ` | `boolean` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Attempts to fetch and print genre ID → name for use with --genre-id.
+Note: API may return 404 for /genres on some catalogs/accounts. This command reports that condition and continues.
+#### `--list-filters`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| OceanVeil | `--list-filters ` | `boolean` | `No`| `NaN` | `NaN` |
+
+OceanVeil only. Boolean flag: when set, prints both --list-genres and --list-tags output. Use --sfw for SFW catalog.
 ### Downloading
 #### `--absolute`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
@@ -126,15 +186,21 @@ Get Raw Show list data
 #### `--series`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
-| Crunchyroll | `--series ${ID}` | `string` | `No`| `--srz` | `NaN` |
+| Crunchyroll, Hidive, OceanVeil | `--series ${ID}` | `string` | `No`| `--srz` | `NaN` |
 
-Requested is the ID of a show not a season.
+Requested is the ID of a show/series (not a season).
+- Hidive: matches Z.<id> search results
+- OceanVeil: numeric title ID from search/site; use with -e for episodes. Optional -s 1 only.
+  Alternatively download by API episode IDs alone with -e (no --srz); see --episode.
 #### `-s`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
 | All | `-s ${ID}` | `string` | `No`| `NaN` | `NaN` |
 
-Used to set the season ID to download from
+Service-specific selector:
+- Crunchyroll/Hidive/ADN: usually season ID
+- Hidive also supports series ID via --srz
+- OceanVeil: optional season selector (only season 1 supported when provided)
 #### `-e`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
@@ -143,13 +209,16 @@ Used to set the season ID to download from
 Set the episode(s) to download from any given show.
 For multiple selection: 1-4 OR 1,2,3,4 
 For special episodes: S1-4 OR S1,S2,S3,S4 where S is the special letter
+OceanVeil with --srz <title_id>: comma-separated display numbers and/or anime_episodes API IDs (from URL …/anime_episodes/<id> or --new).
+OceanVeil without --srz: comma-separated numeric API episode IDs only; requires --auth; resolves each ID via the API (official mode, not a bug).
+OceanVeil: range syntax (1-4) is not parsed here; use commas.
 #### `--extid`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
 | --- | --- | --- | --- | --- | ---| 
 | Crunchyroll | `--extid ${selection}` | `string` | `No`| `--externalid` | `NaN` |
 
-Set the external id to lookup/download.
-Allows you to download or view legacy Crunchyroll Ids 
+Crunchyroll only: legacy external object IDs for lookup/download.
+Not used for OceanVeil, HIDIVE, or ADN (use their --srz / -s / -e flows).
 #### `-q`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | ---| 
@@ -299,6 +368,12 @@ Skip downloading audio
 | All | `--nosubs ` | `boolean` | `No`| `NaN` | `NaN` |
 
 Skip downloading subtitles
+#### `--noCC`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
+| --- | --- | --- | --- | --- | --- | ---| 
+| All | `--noCC ` | `boolean` | `No`| `NaN` | `false`| `noCC: ` |
+
+Do not download closed caption subtitle tracks (only regular subtitles).
 #### `--dubLang`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** | **Choices** | **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | --- | ---| 
@@ -342,7 +417,7 @@ Set the timeout of all download reqests. Set in millisecods
 | --- | --- | --- | --- | --- | --- | ---| 
 | Crunchyroll, Hidive | `--waittime ${waittime}` | `number` | `No`| `NaN` | `0`| `waittime: ` |
 
-Set the time the program waits between downloads. Set in millisecods
+Set the time the program waits between downloads. Set in milliseconds
 #### `--simul`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | ---| 
@@ -367,6 +442,24 @@ Used to download all archived shows
 | All | `--addArchive ` | `boolean` | `No`| `NaN` | `NaN` |
 
 Used to add the `-s` and `--srz` to downloadArchive
+#### `--archive`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| All | `--archive ${path}` | `string` | `No`| `NaN` | `NaN` |
+
+Path to archive file for this run (overrides config). Use different files for e.g. --downloadArchive per show.
+#### `--removeArchive`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| All | `--removeArchive ` | `boolean` | `No`| `NaN` | `NaN` |
+
+Remove the given series/season from the archive (use with --service and -s or --srz).
+#### `--archiveAddEpisodes`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| All | `--archiveAddEpisodes ${episodeList}` | `string` | `No`| `NaN` | `NaN` |
+
+Mark episodes as already in archive without downloading (e.g. "1,2,3" or "1-5"). Use with --service and -s or --srz.
 #### `--partsize`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | ---| 
@@ -463,6 +556,12 @@ Possible Values: und, eng, eng, spa, spa-419, spa-ES, por, por, fra, deu, ara-ME
 
 Set the default subtitle track by language code
 Possible Values: und, eng, eng, spa, spa-419, spa-ES, por, por, fra, deu, ara-ME, ara, ita, rus, tur, hin, cmn, zho, chi, zh-HK, kor, cat, pol, tha, tam, may, vie, ind, tel, jpn
+#### `--subTrackOrder`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
+| --- | --- | --- | --- | --- | --- | ---| 
+| All | `--subTrackOrder ${signs,full,cc}` | `string` | `No`| `NaN` | `full,signs,cc`| `subTrackOrder: ` |
+
+Order of subtitle track types in the muxed file (comma-separated: signs, full, cc). E.g. signs,full,cc puts signs first.
 ### Filename Template
 #### `--fileName`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
@@ -472,6 +571,18 @@ Possible Values: und, eng, eng, spa, spa-419, spa-ES, por, por, fra, deu, ara-ME
 Set the filename template. Use ${variable_name} to insert variables.
 You can also create folders by inserting a path seperator in the filename
 You may use 'title', 'episode', 'showTitle', 'seriesTitle', 'season', 'width', 'height', 'service' as variables.
+#### `--tmpDir`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| All | `--tmpDir ${tmpDir}` | `string` | `No`| `NaN` | `NaN` |
+
+Directory for temporary download/mux files (segments, .ts). Defaults to content dir.
+#### `--outputDir`
+| **Service** | **Usage** | **Type** | **Required** | **Alias** |  **cli-default Entry**
+| --- | --- | --- | --- | --- | ---| 
+| All | `--outputDir ${outputDir}` | `string` | `No`| `NaN` | `NaN` |
+
+Directory for final muxed output (.mkv/.mp4). Supports the same ${variables} as fileName; relative paths are under the content directory. If unset, uses dir-path output (or content).
 #### `--numbers`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** |  **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | ---| 
@@ -510,7 +621,7 @@ Debug mode (tokens may be revealed in the console output)
 #### `--service`
 | **Service** | **Usage** | **Type** | **Required** | **Alias** | **Choices** | **Default** |**cli-default Entry**
 | --- | --- | --- | --- | --- | --- | --- | ---| 
-| All | `--service ${service}` | `string` | `Yes`| `NaN` | [`crunchy`, `hidive`, `adn`] | ``| `service: ` |
+| All | `--service ${service}` | `string` | `Yes`| `NaN` | [`crunchy`, `hidive`, `adn`, `oceanveil`] | ``| `service: ` |
 
 Set the service you want to use
 #### `--update`

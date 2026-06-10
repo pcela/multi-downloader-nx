@@ -45,6 +45,10 @@ export type HLSOptions = {
 	fsRetryTime?: number;
 	override?: 'Y' | 'y' | 'N' | 'n' | 'C' | 'c';
 	callback?: HLSCallback;
+	/** Pre-fetched keys by URI (e.g. for OceanVeil AES-128 where key comes from API) */
+	initialKeys?: Record<string, Buffer>;
+	/** Headers sent with every request (e.g. Authorization for OceanVeil) */
+	requestHeaders?: Record<string, string>;
 };
 
 type Data = {
@@ -71,6 +75,7 @@ type Data = {
 	callback?: HLSCallback;
 	override?: string;
 	dateStart: number;
+	requestHeaders: Record<string, string>;
 };
 
 // hls class
@@ -95,7 +100,7 @@ class hlsDownload {
 			offset: options.offset || 0,
 			baseurl: options.baseurl,
 			skipInit: options.skipInit,
-			keys: {},
+			keys: { ...(options.initialKeys || {}) },
 			timeout: options.timeout ? options.timeout : 60 * 1000,
 			checkPartLength: false,
 			isResume: options.offset ? options.offset > 0 : false,
@@ -103,7 +108,8 @@ class hlsDownload {
 			waitTime: options.fsRetryTime ?? 1000 * 5,
 			callback: options.callback,
 			override: options.override,
-			dateStart: 0
+			dateStart: 0,
+			requestHeaders: options.requestHeaders || {}
 		};
 	}
 	async download() {
@@ -337,6 +343,7 @@ class hlsDownload {
 				p,
 				sURI,
 				{
+					...this.data.requestHeaders,
 					...(seg.byterange
 						? {
 								Range: `bytes=${seg.byterange.offset}-${seg.byterange.offset + seg.byterange.length - 1}`
@@ -368,7 +375,7 @@ class hlsDownload {
 		const kURI = extFn.getURI(key.uri, this.data.baseurl);
 		if (!this.data.keys[kURI]) {
 			try {
-				const rkey = await extFn.getData(segIndex, kURI, {}, segOffset, true);
+				const rkey = await extFn.getData(segIndex, kURI, { ...this.data.requestHeaders }, segOffset, true);
 				return rkey;
 			} catch (error: any) {
 				error.p = segIndex;

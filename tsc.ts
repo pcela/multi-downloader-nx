@@ -67,6 +67,14 @@ export { ignore };
 
 	if (!isTest && isGUI) {
 		process.stdout.write('✓\nBuilding react... ');
+		// Clean React build and webpack cache so we never ship a stale bundle (e.g. missing OceanVeil button)
+		const reactDir = path.join(__dirname, 'gui', 'react');
+		for (const sub of ['build', path.join('node_modules', '.cache')]) {
+			const dir = path.join(reactDir, sub);
+			if (fs.existsSync(dir)) {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
 
 		const installReactDependencies = exec('pnpm install', {
 			cwd: path.join(__dirname, 'gui', 'react')
@@ -96,7 +104,7 @@ export { ignore };
 		if (item.stats.isDirectory()) {
 			if (!fs.existsSync(itemPath)) fs.mkdirSync(itemPath, { recursive: true });
 		} else {
-			fs.cpSync(item.path, itemPath, { recursive: true });
+			fs.copyFileSync(item.path, itemPath);
 		}
 	});
 

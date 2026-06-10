@@ -11,6 +11,7 @@ import pj from '../package.json';
 export let argvC: {
 	[x: string]: unknown;
 	ccTag: string;
+	subTrackOrder?: string;
 	defaultAudio: LanguageItem;
 	defaultSub: LanguageItem;
 	ffmpegOptions: string[];
@@ -28,6 +29,9 @@ export let argvC: {
 	skipSubMux: boolean;
 	downloadArchive: boolean;
 	addArchive: boolean;
+	archive?: string;
+	removeArchive?: boolean;
+	archiveAddEpisodes?: string;
 	but: boolean;
 	auth: boolean | undefined;
 	dlFonts: boolean | undefined;
@@ -36,6 +40,14 @@ export let argvC: {
 	page: number | undefined;
 	locale: string;
 	new: boolean | undefined;
+	sfw: boolean;
+	genre: string | undefined;
+	tags: (string | number)[];
+	genreId: number | undefined;
+	tagIds: (string | number)[] | undefined;
+	listTags: boolean | undefined;
+	listGenres: boolean | undefined;
+	listFilters: boolean | undefined;
 	movieListing: string | undefined;
 	showRaw: string | undefined;
 	seasonRaw: string | undefined;
@@ -57,6 +69,7 @@ export let argvC: {
 	novids: boolean | undefined;
 	noaudio: boolean | undefined;
 	nosubs: boolean | undefined;
+	noCC: boolean | undefined;
 	dubLang: string[];
 	all: boolean;
 	fontSize: number;
@@ -68,6 +81,8 @@ export let argvC: {
 	mp4: boolean;
 	skipmux: boolean | undefined;
 	fileName: string;
+	tmpDir: string | undefined;
+	outputDir: string | undefined;
 	numbers: number;
 	nosess: string;
 	debug: boolean | undefined;
@@ -75,7 +90,7 @@ export let argvC: {
 	rawoutput: string;
 	nocleanup: boolean;
 	help: boolean | undefined;
-	service: 'crunchy' | 'hidive' | 'adn';
+	service: 'crunchy' | 'hidive' | 'adn' | 'oceanveil';
 	update: boolean;
 	fontName: string | undefined;
 	_: (string | number)[];

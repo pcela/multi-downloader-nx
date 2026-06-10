@@ -72,7 +72,7 @@ export default class Base {
 	async openFolder(folderType: FolderTypes) {
 		switch (folderType) {
 			case 'content':
-				open(cfg.dir.content);
+				open(cfg.dir.output ?? cfg.dir.content);
 				break;
 			case 'config':
 				open(cfg.dir.config);

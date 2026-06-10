@@ -41,6 +41,8 @@ export type QueueItem = {
 	dlVideoOnce: boolean;
 	dubLang: string[];
 	image: string;
+	/** Episode/show IDs for download (string e.g. OceanVeil, number e.g. Hidive/ADN) */
+	ids?: (string | number)[];
 } & ResolveItemsData;
 
 export type ResolveItemsData = {
@@ -55,6 +57,9 @@ export type ResolveItemsData = {
 	fileName: string;
 	q: number;
 	dlsubs: string[];
+	hslang?: string;
+	/** OceanVeil: use SFW catalog for metadata (default false = mature) */
+	sfw?: boolean;
 };
 
 export type SearchResponseItem = {
@@ -98,7 +103,22 @@ export type FuniEpisodeData = {
 };
 
 export type AuthData = { username: string; password: string };
-export type SearchData = { search: string; page?: number; 'search-type'?: string; 'search-locale'?: string };
+export type SearchData = {
+	search: string;
+	page?: number;
+	'search-type'?: string;
+	'search-locale'?: string;
+	/** OceanVeil: use SFW catalog */
+	sfw?: boolean;
+	/** OceanVeil: genre name (resolved to ID via API) */
+	genre?: string;
+	/** OceanVeil: tag names or IDs (names resolved via API) */
+	tags?: (string | number)[];
+	/** OceanVeil: genre ID (use when known; overrides genre name) */
+	genreId?: number;
+	/** OceanVeil: tag IDs (use when known; overrides tag names) */
+	tagIds?: (string | number)[];
+};
 export type FuniGetShowData = { id: number; e?: string; but: boolean; all: boolean };
 export type FuniGetEpisodeData = { subs: FuniSubsData; fnSlug: FuniEpisodeData; simul?: boolean; dubLang: string[]; s: string };
 export type FuniStreamData = {

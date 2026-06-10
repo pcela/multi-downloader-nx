@@ -1,5 +1,5 @@
 import React, { RefObject } from 'react';
-import { Box, ClickAwayListener, Divider, List, ListItem, Paper, TextField, Typography } from '@mui/material';
+import { Box, ClickAwayListener, Divider, FormControlLabel, List, ListItem, Paper, Switch, TextField, Typography } from '@mui/material';
 import { SearchResponse } from '../../../../../../@types/messageHandler';
 import useStore from '../../../hooks/useStore';
 import { messageChannelContext } from '../../../provider/MessageChannel';
@@ -11,6 +11,7 @@ const SearchBox: React.FC = () => {
 	const messageHandler = React.useContext(messageChannelContext);
 	const [store, dispatch] = useStore();
 	const [search, setSearch] = React.useState('');
+	const [sfwCatalog, setSfwCatalog] = React.useState(false);
 
 	const [focus, setFocus] = React.useState(false);
 
@@ -30,23 +31,47 @@ const SearchBox: React.FC = () => {
 	};
 
 	React.useEffect(() => {
+		if (store.service === 'oceanveil') {
+			dispatch({
+				type: 'downloadOptions',
+				payload: { ...store.downloadOptions, sfw: sfwCatalog }
+			});
+		}
+	}, [sfwCatalog]);
+
+	React.useEffect(() => {
 		if (search.trim().length === 0) return setSearchResult({ isOk: true, value: [] });
+
+		if (store.service === 'hidive' && /hidive\.com\/(season|interstitial|video)\/\d+/.test(search.trim())) {
+			selectItem(search.trim());
+			setFocus(false);
+			return;
+		}
 
 		const timeOutId = setTimeout(async () => {
 			if (search.trim().length > 3) {
-				const s = await messageHandler?.search({ search });
+				const searchPayload: { search: string; sfw?: boolean } = { search };
+				if (store.service === 'oceanveil') searchPayload.sfw = sfwCatalog;
+				const s = await messageHandler?.search(searchPayload);
 				if (s && s.isOk) s.value = s.value.slice(0, 10);
 				setSearchResult(s);
 			}
 		}, 500);
 		return () => clearTimeout(timeOutId);
-	}, [search]);
+	}, [search, store.service, sfwCatalog]);
 
 	const anchorBounding = anchor.current?.getBoundingClientRect();
 	return (
 		<ClickAwayListener onClickAway={() => setFocus(false)}>
 			<Box sx={{ m: 2 }}>
 				<TextField ref={anchor} value={search} onClick={() => setFocus(true)} onChange={(e) => setSearch(e.target.value)} variant="outlined" label="Search" fullWidth />
+				{store.service === 'oceanveil' && (
+					<FormControlLabel
+						control={<Switch checked={sfwCatalog} onChange={(_, checked) => setSfwCatalog(checked)} color="primary" />}
+						label="SFW catalog"
+						sx={{ mt: 1, display: 'block' }}
+					/>
+				)}
 				{searchResult !== undefined && searchResult.isOk && searchResult.value.length > 0 && focus && (
 					<Paper
 						sx={{

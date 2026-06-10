@@ -29,6 +29,10 @@ const MenuBar: React.FC = () => {
 				return 'Hidive';
 			case 'adn':
 				return 'AnimationDigitalNetwork';
+			case 'oceanveil':
+				return 'OceanVeil';
+			default:
+				return '';
 		}
 	};
 
