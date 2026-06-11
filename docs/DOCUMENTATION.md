@@ -1,4 +1,4 @@
-# multi-downloader-nx (v5.7.3)
+# multi-downloader-nx (v5.7.3a)
 
 If you find any bugs in this documentation or in the program itself please report it [over on GitHub](https://github.com/pcela/multi-downloader-nx/issues).
 
