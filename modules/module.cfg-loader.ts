@@ -169,7 +169,9 @@ const loadCfg = (): ConfigObject => {
 		if (d && !fs.existsSync(d)) {
 			try {
 				fs.mkdirSync(d, { recursive: true });
-			} catch (_) {}
+			} catch (_) {
+				// eslint-disable-next-line no-empty
+			}
 		}
 	}
 	return defaultCfg;

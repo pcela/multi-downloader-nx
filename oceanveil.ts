@@ -264,7 +264,7 @@ export default class Oceanveil implements ServiceClass {
 			return { isOk: false, reason: new Error(msg) };
 		}
 		const authHeader = res.res.headers.get('authorization') || res.headers?.authorization || '';
-		let bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+		const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
 		if (!bearer) {
 			console.error('[OceanVeil] No token in response headers.');
 			return { isOk: false, reason: new Error('No token in response') };
@@ -364,7 +364,7 @@ export default class Oceanveil implements ServiceClass {
 		const data = json.data;
 		if (!data) return null;
 		const attrs = data.attributes || {};
-		let showTitle = attrs.name || `Title ${titleId}`;
+		const showTitle = attrs.name || `Title ${titleId}`;
 		const episodes: EpisodeInfo[] = [];
 		const refs = data.relationships?.animeEpisodes?.data || [];
 		const included = json.included || [];
@@ -851,7 +851,9 @@ export default class Oceanveil implements ServiceClass {
 		if (!options.nocleanup) {
 			try {
 				if (fs.existsSync(tsFile)) fs.unlinkSync(tsFile);
-			} catch (_) {}
+			} catch (_) {
+				// eslint-disable-next-line no-empty
+			}
 		}
 		console.info('[OceanVeil] Saved:', outputPath);
 		return true;

@@ -69,7 +69,7 @@ export default class Helper {
 	}
 
 	static cleanupFilename(n: string) {
-		/* eslint-disable no-extra-boolean-cast, no-useless-escape, no-control-regex */
+		/* eslint-disable no-useless-escape, no-control-regex */
 		const fixingChar = '_';
 		const illegalRe = /[\/\?<>\\:\*\|"\uFF1A\uFE55]/g;
 		const controlRe = /[\x00-\x1f\x80-\x9f]/g;

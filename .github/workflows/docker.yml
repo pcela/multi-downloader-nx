@@ -1,36 +1,36 @@
 name: build and push docker image
 
 on:
-  push:
-    branches: [master]
-  workflow_dispatch:
+    push:
+        branches: [master]
+    workflow_dispatch:
 
 permissions:
-  contents: read
-  packages: write  # To jest kluczowe, aby móc zapisywać obraz w GitHubie
+    contents: read
+    packages: write # To jest kluczowe, aby móc zapisywać obraz w GitHubie
 
 jobs:
-  build-node:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Build and push Docker images
-        id: docker_build
-        uses: docker/build-push-action@v6
-        with:
-          push: true
-          tags: ghcr.io/${{ github.repository }}:latest
-          
-      - name: Image digest
-        run: echo ${{ steps.docker_build.outputs.digest }}
+    build-node:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            - name: Login to GitHub Container Registry
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and push Docker images
+              id: docker_build
+              uses: docker/build-push-action@v6
+              with:
+                  push: true
+                  tags: ghcr.io/${{ github.repository }}:latest
+
+            - name: Image digest
+              run: echo ${{ steps.docker_build.outputs.digest }}

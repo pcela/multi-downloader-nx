@@ -2437,8 +2437,8 @@ export default class Crunchy implements ServiceClass {
 								: vstreamPlaylists;
 
 						//Get name of CDNs/Servers (let so evs3 fallback can splice in new servers)
-						let vstreamServers = Object.keys(vstreamPlaylists);
-						let astreamServers = Object.keys(astreamPlaylists);
+						const vstreamServers = Object.keys(vstreamPlaylists);
+						const astreamServers = Object.keys(astreamPlaylists);
 
 						options.x = options.x > vstreamServers.length ? 1 : options.x;
 
