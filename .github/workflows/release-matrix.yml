@@ -110,35 +110,24 @@ jobs:
                       ./lib/_builds/multi-downloader-nx-${{ matrix.build_type }}-${{ matrix.build_arch }}-${{ matrix.gui }}.7z
                       ./lib/_builds/multi-downloader-nx-${{ matrix.build_type }}-${{ matrix.build_arch }}-${{ matrix.gui }}.7z.sha256
                   fail_on_unmatched_files: true
-
     build-docker:
         runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            packages: write # Wymagane do zapisu w GHCR
         steps:
             - uses: actions/checkout@v6
-            - name: Set up QEMU
-              uses: docker/setup-qemu-action@v3
             - name: Set up Docker Buildx
               id: buildx
-              uses: docker/setup-buildx-action@v3
-            - name: Login to GitHub Container Registry
-              uses: docker/login-action@v3
+              uses: docker/setup-buildx-action@v4
+            - name: Login to DockerHub
+              uses: docker/login-action@v4
               with:
-                  registry: ghcr.io
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
+                  username: ${{ secrets.DOCKERHUB_USERNAME }}
+                  password: ${{ secrets.DOCKERHUB_TOKEN }}
             - name: Build and push Docker images
-              id: docker_build
-              uses: docker/build-push-action@v6
+              uses: docker/build-push-action@v7
               with:
+                  github-token: ${{ github.token }}
                   push: true
-                  # Budowanie wieloplatformowe dla szerokiej kompatybilności
-                  platforms: linux/amd64,linux/arm64,linux/arm/v7
                   tags: |
-                      ghcr.io/${{ github.repository_owner_lc }}/multi-downloader-nx:${{ github.event.release.tag_name }}
-                      ghcr.io/${{ github.repository_owner_lc }}/multi-downloader-nx:latest
+                      "pcela/multi-downloader-nx:${{ github.event.release.tag_name }}"
             - name: Image digest
               run: echo ${{ steps.docker_build.outputs.digest }}
-              
