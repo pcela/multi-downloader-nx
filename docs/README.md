@@ -26,7 +26,7 @@ To change these paths you need to edit `bin-path.yml` in `./config/` directory.
 
 ## CLI Information
 
-See [the documentation](https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md) for a complete list of what options are available. You can define defaults for the commands by editing the `cli-defaults.yml` file in the `./config/` directory.
+See [the documentation](https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md) for a complete list of what options are available. You can define defaults for the commands by editing the `cli-defaults.yml` file in the `./config/` directory.
 
 ### Example usage
 
@@ -68,7 +68,7 @@ Dependencies that are only required for running from code. These are not require
 
 Please note that NodeJS, NPM, and PNPM must be installed on your system. For instructions on how to install pnpm, check (https://pnpm.io/installation)
 
-First clone this repo `git clone https://github.com/anidl/multi-downloader-nx.git`.
+First clone this repo `git clone https://github.com/pcela/multi-downloader-nx.git`.
 
 `cd` into the cloned directory and run `pnpm i`. Next, decide if you want to package the application, build the code, or run from typescript.
 
