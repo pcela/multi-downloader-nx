@@ -132,7 +132,7 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: read
-            packages: write # Wymagane do zapisu w GHCR
+            packages: write
         steps:
             - uses: actions/checkout@v6
             
