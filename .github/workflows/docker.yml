@@ -30,6 +30,6 @@ jobs:
                   github-token: ${{ github.token }}
                   push: ${{ github.ref == 'refs/heads/master' }}
                   tags: |
-                      "multidl/multi-downloader-nx:latest"
+                      "pcela/multi-downloader-nx:latest"
             - name: Image digest
               run: echo ${{ steps.docker_build.outputs.digest }}
