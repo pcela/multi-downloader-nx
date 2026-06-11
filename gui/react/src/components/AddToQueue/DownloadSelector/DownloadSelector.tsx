@@ -380,7 +380,7 @@ const DownloadSelector: React.FC<DownloadSelectorProps> = ({ onFinish }) => {
 						label="Filename Overwrite"
 					/>
 					<Tooltip title={<Typography>Click here to see the documentation</Typography>} arrow placement="top">
-						<Link href="https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#filename-template" rel="noopener noreferrer" target="_blank">
+						<Link href="https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#filename-template" rel="noopener noreferrer" target="_blank">
 							<InfoOutlinedIcon
 								sx={{
 									transition: '100ms',
