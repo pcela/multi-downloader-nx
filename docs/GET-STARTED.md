@@ -1,6 +1,6 @@
 # multi-downloader-nx (v5.6.5)
 
-If you find any bugs in this documentation or in the program itself please report it [over on GitHub](https://github.com/anidl/multi-downloader-nx/issues).
+If you find any bugs in this documentation or in the program itself please report it [over on GitHub](https://github.com/pcela/multi-downloader-nx/issues).
 
 ## Legal Warning
 
@@ -169,7 +169,7 @@ Keep in mind that the `bgroupcert.dat` may not always be exactly 1.26 KiB but it
 
 ## Installation
 
-1. Download the latest release of multi-downloader-nx from [here](https://github.com/anidl/multi-downloader-nx/releases/latest). Choose the `multi-downloader-nx-windows-gui.7z` file, download it and extract it to a folder of your choice. I chose `%USERPROFILE%\Desktop\multi-downloader-nx`.
+1. Download the latest release of multi-downloader-nx from [here](https://github.com/pcela/multi-downloader-nx/releases/latest). Choose the `multi-downloader-nx-windows-gui.7z` file, download it and extract it to a folder of your choice. I chose `%USERPROFILE%\Desktop\multi-downloader-nx`.
 
 2. Start `aniDL.exe` by double-clicking it. If you see a "Windows protected your PC" message, click on "More info" and then "Run anyway". You can also allow it through the Windows firewall if you see a "Windows Security Alert" window pop up. \
 After that, you should see the first boot GUI of multi-downloader-nx:
@@ -189,7 +189,7 @@ Before we go into the usage, i would like to explain the configuration options. 
     1. In the same folder you opened `aniDL.exe` from, you should see a folder called `config`. Enter that.
     2. Double-click the `cli-defaults.yml` file to open it in your default text editor.
 
-All available settings are available in the [`DOCUMENTATION.md`](https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md) file. In every table, there will, most of the time, be a "cli-default Entry" column with a value. If the value in the column is "NaN", that option is not available for the `cli-default.yml` file. For example, if you wanted to set `--astream` to `android`:
+All available settings are available in the [`DOCUMENTATION.md`](https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md) file. In every table, there will, most of the time, be a "cli-default Entry" column with a value. If the value in the column is "NaN", that option is not available for the `cli-default.yml` file. For example, if you wanted to set `--astream` to `android`:
 1. Notice how the docs say the "cli-default Entry" is `astream:`. And the "Type" column is "string". In your `cli-defaults.yml` file, you would add this line to the end of the file:
 ```yaml
 astream: "android"
@@ -301,9 +301,9 @@ If you wanted to download the show via the ID, you would enter `G4PH0WXVJ` in th
 
 #### Language Options
 
-1. **Dub Languages**: This is where you select the language(s) you want to download the dub for. [`DOCUMENTATION.md`](https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--dublang) for all available options.
-2. **Sub Languages**: This is where you select the language(s) you want to download the subs for. [`DOCUMENTATION.md`](https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--dlsubs) for all available options.
+1. **Dub Languages**: This is where you select the language(s) you want to download the dub for. [`DOCUMENTATION.md`](https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--dublang) for all available options.
+2. **Sub Languages**: This is where you select the language(s) you want to download the subs for. [`DOCUMENTATION.md`](https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--dlsubs) for all available options.
 
 #### Filename Overwrite
 
-1. **Filename Overwrite**: This is where you can change the filename format for the downloaded episodes. [`DOCUMENTATION.md`](https://github.com/anidl/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--filename) for all available options.
+1. **Filename Overwrite**: This is where you can change the filename format for the downloaded episodes. [`DOCUMENTATION.md`](https://github.com/pcela/multi-downloader-nx/blob/master/docs/DOCUMENTATION.md#--filename) for all available options.
