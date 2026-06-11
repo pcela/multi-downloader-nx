@@ -92,7 +92,7 @@ const MenuBar: React.FC = () => {
 			<Menu open={openMenu === 'help'} anchorEl={anchorEl} onClose={handleClose}>
 				<MenuItem
 					onClick={() => {
-						msg.openURL('https://github.com/anidl/multi-downloader-nx');
+						msg.openURL('https://github.com/pcela/multi-downloader-nx');
 						handleClose();
 					}}
 				>
@@ -100,7 +100,7 @@ const MenuBar: React.FC = () => {
 				</MenuItem>
 				<MenuItem
 					onClick={() => {
-						msg.openURL('https://github.com/anidl/multi-downloader-nx/issues/new?assignees=AnimeDL,AnidlSupport&labels=bug&template=bug.yml&title=BUG');
+						msg.openURL('https://github.com/pcela/multi-downloader-nx/issues/new?assignees=AnimeDL,AnidlSupport&labels=bug&template=bug.yml&title=BUG');
 						handleClose();
 					}}
 				>
@@ -108,7 +108,7 @@ const MenuBar: React.FC = () => {
 				</MenuItem>
 				<MenuItem
 					onClick={() => {
-						msg.openURL('https://github.com/anidl/multi-downloader-nx/graphs/contributors');
+						msg.openURL('https://github.com/pcela/multi-downloader-nx/graphs/contributors');
 						handleClose();
 					}}
 				>
